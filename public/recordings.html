@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Raw Recording Dump - MEYDAN CDR</title>
+  <!-- Favicon so the tab shows the same logo -->
+  <link rel="icon" type="image/png" href="/uploads/MultyLogo.png" />
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"
+  />
+  <!-- Material Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <!-- Font Awesome for spinner icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+  <style>
+    body { background: #fff; }
+    /* Reduce global paddings */
+    .container { padding: 0.25rem; }
+    .box, .p-4 { padding: 0.5rem !important; }
+    .column { padding: 0.5rem !important; }
+    #filtersBox { padding: 0.5rem !important; }
+    .header-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+    #recordingsTable {
+      border-collapse: collapse;
+    }
+    #recordingsTable th, #recordingsTable td {
+      font-size: 0.8rem;
+      border: 1px solid #ddd;
+      padding: 0.25rem 0.5rem;
+    }
+
+    /* Recording row styling */
+    .row-recording {
+      background-color: #f0f8ff !important; /* Light blue for recordings */
+    }
+    
+    /* Virtual scrolling and load more styling */
+    .is-loading-more {
+      padding: 1rem;
+      text-align: center;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+      margin: 0.5rem 0;
+    }
+    
+    .is-loading-more span {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: bold;
+      color: #555;
+    }
+    
+    #load-more-btn {
+      transition: all 0.3s ease;
+    }
+    
+    #load-more-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .is-hidden { display: none; }
+    /* Compact styling for status/error/loading messages */
+    #loading,
+    #errorBox,
+    #stats {
+      padding: 0.25rem 0.5rem !important;
+      font-size: 0.75rem !important;
+    }
+    /* Center the Reports title horizontally */
+    .headingg {
+      position:absolute;
+      top:25px;
+      left:50%;
+      transform:translateX(-50%);
+      text-align:center;
+      text-transform:uppercase;
+      color:#EF6F53;
+      z-index:2;
+    }
+
+    /* Custom fetch button color */
+    .btn-fetch {
+      background-color: #1976d2 !important;
+      border-color: #EF6F53 !important;
+      color: white !important;
+    }
+
+    /* Play button styling */
+    .play-btn {
+      background-color: #00d1b2 !important;
+      border-color: #00d1b2 !important;
+      color: white !important;
+    }
+
+    .play-btn:hover {
+      background-color: #00b89c !important;
+      border-color: #00b89c !important;
+    }
+
+    /* Recording modal styling */
+    .recording-modal .modal-card {
+      width: 90%;
+      max-width: 800px;
+    }
+
+    /* S.No. column styling */
+    #recordingsTable th:first-child,
+    #recordingsTable td:first-child {
+      width: 60px;
+      text-align: center;
+      font-weight: bold;
+    }
+
+    /* Navigation links styling */
+    .nav-links {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    
+    .nav-links a.is-active {
+      font-weight: bold;
+      color: #3273dc !important;
+    }
+
+    .recording-modal .modal-card-body {
+      padding: 1rem;
+    }
+
+    /* Audio controls styling */
+    .audio-controls {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .progress-container {
+      flex: 1;
+      position: relative;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 8px;
+      background-color: #e0e0e0;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background-color: #00d1b2;
+      border-radius: 4px;
+      transition: width 0.1s ease;
+    }
+
+    /* Navigation styling */
+    .nav-links {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 10;
+    }
+
+    .nav-links a {
+      margin-left: 1rem;
+      color: #363636;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .nav-links a:hover {
+      color: #EF6F53;
+    }
+
+    .nav-links a.is-active {
+      color: #EF6F53;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container is-fluid">
+
+
+    <!-- Header -->
+    <div class="header-row">
+      <img src="/uploads/logo.webp" alt="Logo" width="250" />
+    </div>
+
+    <!-- Filters Section -->
+    <form id="filterForm" class="box p-4">
+      <div class="columns is-variable is-2">
+        <div class="column">
+          <label class="label">Start datetime</label>
+          <input id="startDate" class="input" type="datetime-local" required />
+        </div>
+        <div class="column">
+          <label class="label">End datetime</label>
+          <input id="endDate" class="input" type="datetime-local" required />
+        </div>
+      </div>
+
+      <!-- Advanced filters section -->
+      <div class="columns is-multiline">
+        <div class="column is-3">
+          <div class="field">
+            <label class="label is-small">Contact Number</label>
+            <div class="control">
+              <input id="contactNumber" class="input is-small" type="text" placeholder="Search caller/callee number or name" />
+            </div>
+          </div>
+        </div>
+        <div class="column is-3">
+          <div class="field">
+            <label class="label is-small">Call ID</label>
+            <div class="control">
+              <input id="callId" class="input is-small" type="text" placeholder="Call ID" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="field has-text-centered" style="margin: auto;">
+        <button id="fetchBtn" type="submit" class="button is-primary btn-fetch is-small">Fetch Recordings</button>
+      </div>
+    </form>
+
+    <!-- Loading Indicator -->
+    <div class="notification is-info is-hidden" id="loading">
+      <span class="icon">
+        <i class="fas fa-spinner fa-spin"></i>
+      </span>
+      <span>Loading recordings...</span>
+    </div>
+
+    <!-- Error Box -->
+    <div class="notification is-danger is-hidden" id="errorBox">
+      <button class="delete" onclick="document.getElementById('errorBox').classList.add('is-hidden')"></button>
+      <span id="errorMessage"></span>
+    </div>
+
+    <!-- Statistics -->
+    <div class="notification is-light is-hidden" id="stats">
+      <span id="statsContent"></span>
+    </div>
+
+    <!-- Results Table -->
+    <div class="table-container" style="max-height: 50vh; overflow-y: auto; max-width: 100%; margin: auto;">
+      <table class="table is-fullwidth is-striped is-hoverable" id="recordingsTable">
+        <thead>
+          <tr>
+            <th>S.No.</th>
+            <th>Called Time (mm:dd:yyyy, hh:mm:ss)</th>
+            <th>Caller ID Number</th>
+            <th>Caller ID Name</th>
+            <th>Callee ID Number</th>
+            <th>Callee ID Name</th>
+            <th>Call ID</th>
+            <th>Recordings</th>
+          </tr>
+        </thead>
+        <tbody id="recordingsTableBody">
+          <!-- Results will be populated here -->
+        </tbody>
+      </table>
+    </div>
+
+    <!-- No Results Message -->
+    <div class="notification is-warning is-hidden" id="noResults">
+      <span class="icon">
+        <i class="material-icons">info</i>
+      </span>
+      <span>No recordings found for the selected criteria.</span>
+    </div>
+
+    <!-- CSV Download Button and Navigation -->
+    <div class="columns is-vcentered mt-2 mb-2">
+      <div class="column has-text-centered">
+        <button id="exportBtn" class="button is-link is-small" disabled>
+          <span class="icon is-small">
+            <i class="material-icons">file_download</i>
+          </span>
+          <span>Download CSV</span>
+        </button>
+      </div>
+      <div class="column is-narrow">
+        <!-- Navigation Links -->
+        <div class="nav-links">
+          <a href="/" class="button is-text is-small">Main Reports</a>
+          <a href="/recordings.html" class="button is-text is-small is-active">Raw Recording Dump</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-1 has-text-centered">Copyright @ 2025. All Rights Reserved by Multycomm</div>
+  <!-- Include the recordings JavaScript -->
+  <script src="recordings.js"></script>
+</body>
+</html>
