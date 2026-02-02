@@ -129,7 +129,7 @@ class SessionDbService {
           query = `INSERT INTO ${sessionTable} (
             call_id, timestamp, queue_name, agent_name, agent_ext, caller_id_number,
             answered_time, hangup_time, wait_duration, agent_disposition, sub_disp_1,
-            sub_disp_2, agent_history, queue_history, follow_up_notes, hold_duration, raw_data
+            sub_disp_2, sub_disp_3, agent_history, queue_history, follow_up_notes, hold_duration, raw_data
           ) VALUES ?`;
           values = records.map(record => [
             record.call_id || record.callid || null,
@@ -144,6 +144,7 @@ class SessionDbService {
             record.agent_disposition || null,
             record.sub_disp_1 || null,
             record.sub_disp_2 || null,
+            record.sub_disp_3 || null,
             record.agent_history || null,
             record.queue_history || null,
             record.follow_up_notes || null,
@@ -156,7 +157,7 @@ class SessionDbService {
           query = `INSERT INTO ${sessionTable} (
             call_id, timestamp, queue_name, agent_name, agent_ext, caller_id_number,
             answered_time, hangup_time, wait_duration, agent_disposition, sub_disp_1,
-            sub_disp_2, agent_history, queue_history, raw_data
+            sub_disp_2, sub_disp_3, agent_history, queue_history, raw_data
           ) VALUES ?`;
           values = records.map(record => [
             record.call_id || record.callid || null,
@@ -171,6 +172,7 @@ class SessionDbService {
             record.agent_disposition || null,
             record.sub_disp_1 || null,
             record.sub_disp_2 || null,
+            record.sub_disp_3 || null,
             record.agent_history || null,
             record.queue_history || null,
             JSON.stringify(record)
@@ -181,7 +183,7 @@ class SessionDbService {
           query = `INSERT INTO ${sessionTable} (
             call_id, timestamp, queue_name, agent_name, agent_ext, caller_id_number,
             called_time, answered_time, hangup_time, wait_duration, agent_disposition,
-            sub_disp_1, sub_disp_2, agent_history, queue_history, raw_data
+            sub_disp_1, sub_disp_2, sub_disp_3, agent_history, queue_history, raw_data
           ) VALUES ?`;
           values = records.map(record => [
             record.call_id || record.callid || null,
@@ -197,6 +199,7 @@ class SessionDbService {
             record.agent_disposition || null,
             record.sub_disp_1 || null,
             record.sub_disp_2 || null,
+            record.sub_disp_3 || null,
             record.agent_history || null,
             record.queue_history || null,
             JSON.stringify(record)
@@ -207,7 +210,7 @@ class SessionDbService {
           query = `INSERT INTO ${sessionTable} (
             call_id, timestamp, campaign_name, agent_name, agent_ext, caller_id_number,
             called_time, answered_time, hangup_time, wait_duration, agent_disposition,
-            sub_disp_1, sub_disp_2, raw_data
+            sub_disp_1, sub_disp_2, sub_disp_3, raw_data
           ) VALUES ?`;
           values = records.map(record => [
             record.call_id || record.callid || null,
@@ -223,6 +226,7 @@ class SessionDbService {
             record.agent_disposition || null,
             record.sub_disp_1 || null,
             record.sub_disp_2 || null,
+            record.sub_disp_3 || null,
             JSON.stringify(record)
           ]);
           break;

@@ -187,12 +187,17 @@ async function updateMissingDispositionFields() {
       // Find recent calls missing agent_disposition or follow_up_notes
       const idField = table.name === 'raw_campaigns' ? 'call_id' : 'callid';
       const missingFieldsQuery = `
-        SELECT ${idField} as callid, raw_data, created_at
+        SELECT ${idField} as callid, raw_data, created_at, 
+               COALESCE(disposition_retry_count, 0) as retry_count
         FROM ${table.name} 
         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
         AND (
-          (JSON_EXTRACT(raw_data, '$.agent_disposition') IS NULL OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '')
+          (
+            (JSON_EXTRACT(raw_data, '$.agent_disposition') IS NULL OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '')
+            AND COALESCE(disposition_retry_count, 0) < 14
+          )
           OR (JSON_EXTRACT(raw_data, '$.follow_up_notes') IS NULL OR JSON_EXTRACT(raw_data, '$.follow_up_notes') = '')
+          OR (JSON_EXTRACT(raw_data, '$.media_recording_id') IS NOT NULL OR JSON_EXTRACT(raw_data, '$.recording_filename') IS NOT NULL)
         )
         ORDER BY created_at DESC 
         LIMIT 50
@@ -220,14 +225,20 @@ async function updateMissingDispositionFields() {
         const hasDisposition = updatedCall.agent_disposition && updatedCall.agent_disposition !== '';
         const hasFollowUpNotes = updatedCall.follow_up_notes && updatedCall.follow_up_notes !== '';
         
+        const callId = updatedCall.call_id || updatedCall.callid;
+        
+        // Find the original record to get current retry count
+        const originalRecord = missingRecords.find(r => r.callid === callId);
+        const currentRetryCount = originalRecord ? originalRecord.retry_count : 0;
+        
         if (hasDisposition || hasFollowUpNotes) {
           try {
-            const callId = updatedCall.call_id || updatedCall.callid;
-            
-            // Update raw table
+            // Update raw table - reset retry counter if disposition is found
             const updateQuery = `
               UPDATE ${table.name} 
-              SET raw_data = ?, updated_at = NOW() 
+              SET raw_data = ?, 
+                  disposition_retry_count = 0,
+                  updated_at = NOW() 
               WHERE ${idField} = ?
             `;
             
@@ -248,9 +259,30 @@ async function updateMissingDispositionFields() {
             const dispositionInfo = hasDisposition ? `agent_disposition = "${updatedCall.agent_disposition}"` : '';
             const followUpInfo = hasFollowUpNotes ? `follow_up_notes = "${updatedCall.follow_up_notes}"` : '';
             const updateInfo = [dispositionInfo, followUpInfo].filter(info => info).join(', ');
-            log(`  ✅ Updated ${callId}: ${updateInfo}`);
+            log(`  ✅ Updated ${callId}: ${updateInfo} (retry count reset to 0)`);
           } catch (updateError) {
             log(`  ❌ Failed to update ${updatedCall.call_id || updatedCall.callid}: ${updateError.message}`, 'error');
+          }
+        } else {
+          // Disposition still missing - increment retry counter
+          try {
+            const newRetryCount = currentRetryCount + 1;
+            const incrementQuery = `
+              UPDATE ${table.name} 
+              SET disposition_retry_count = ?,
+                  updated_at = NOW() 
+              WHERE ${idField} = ?
+            `;
+            
+            await dbService.query(incrementQuery, [newRetryCount, callId]);
+            
+            if (newRetryCount >= 14) {
+              log(`  ⚠️ ${callId}: Disposition still missing after ${newRetryCount} attempts - will stop retrying`);
+            } else {
+              log(`  🔄 ${callId}: Disposition still missing - retry count incremented to ${newRetryCount}/14`);
+            }
+          } catch (incrementError) {
+            log(`  ❌ Failed to increment retry counter for ${callId}: ${incrementError.message}`, 'error');
           }
         }
       }
@@ -286,8 +318,26 @@ async function updateFinalReportDispositions(callsToUpdate) {
       try {
         // Extract disposition and follow-up notes information
         const agentDisposition = call.agent_disposition || '';
-        const agentSubdisposition = call.agent_subdisposition?.name || call.agent_subdisposition || '';
         const followUpNotes = call.follow_up_notes || '';
+        
+        // Extract nested subdispositions properly
+        let subDisp1 = '';
+        let subDisp2 = '';
+        let subDisp3 = '';
+        
+        if (call.agent_subdisposition) {
+          if (typeof call.agent_subdisposition === 'object' && call.agent_subdisposition.name) {
+            subDisp1 = call.agent_subdisposition.name;
+            if (call.agent_subdisposition.subdisposition && call.agent_subdisposition.subdisposition.name) {
+              subDisp2 = call.agent_subdisposition.subdisposition.name;
+              if (call.agent_subdisposition.subdisposition.subdisposition && call.agent_subdisposition.subdisposition.subdisposition.name) {
+                subDisp3 = call.agent_subdisposition.subdisposition.subdisposition.name;
+              }
+            }
+          } else if (typeof call.agent_subdisposition === 'string') {
+            subDisp1 = call.agent_subdisposition;
+          }
+        }
         
         // Build dynamic update query based on available fields
         const fieldsToUpdate = [];
@@ -298,9 +348,9 @@ async function updateFinalReportDispositions(callsToUpdate) {
           values.push(agentDisposition);
         }
         
-        if (agentSubdisposition) {
-          fieldsToUpdate.push('sub_disp_1 = ?', 'sub_disp_2 = ?');
-          values.push(agentSubdisposition, agentSubdisposition);
+        if (subDisp1 || subDisp2 || subDisp3) {
+          fieldsToUpdate.push('sub_disp_1 = ?', 'sub_disp_2 = ?', 'sub_disp_3 = ?');
+          values.push(subDisp1, subDisp2, subDisp3);
         }
         
         if (followUpNotes) {
@@ -322,7 +372,9 @@ async function updateFinalReportDispositions(callsToUpdate) {
           
           const updateInfo = [];
           if (agentDisposition) updateInfo.push(`agent_disposition="${agentDisposition}"`);
-          if (agentSubdisposition) updateInfo.push(`sub_disp="${agentSubdisposition}"`);
+          if (subDisp1) updateInfo.push(`sub_disp_1="${subDisp1}"`);
+          if (subDisp2) updateInfo.push(`sub_disp_2="${subDisp2}"`);
+          if (subDisp3) updateInfo.push(`sub_disp_3="${subDisp3}"`);
           if (followUpNotes) updateInfo.push(`follow_up_notes="${followUpNotes}"`);
           
           log(`  ✅ Updated final_report for ${call.callId}: ${updateInfo.join(', ')}`);

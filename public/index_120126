@@ -1,54 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MEYDAN CDR</title>
   <!-- Favicon so the tab shows the same logo -->
   <link rel="icon" type="image/png" href="/uploads/MultyLogo.png" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css" />
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css"
+  />
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <!-- Font Awesome for spinner icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
   <style>
-    body {
-      background: #fff;
-    }
-
+    body { background: #fff; }
     /* Reduce global paddings */
-    .container {
-      padding: 0.25rem;
-    }
-
-    .box,
-    .p-4 {
-      padding: 0.5rem !important;
-    }
-
-    .column {
-      padding: 0.5rem !important;
-    }
-
-    #filtersBox {
-      padding: 0.5rem !important;
-    }
-
-    .header-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.5rem;
-    }
-
+    .container { padding: 0.25rem; }
+    .box, .p-4 { padding: 0.5rem !important; }
+    .column { padding: 0.5rem !important; }
+    #filtersBox { padding: 0.5rem !important; }
+    .header-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
     #resultTable {
       border-collapse: collapse;
     }
-
-    #resultTable th,
-    #resultTable td {
+    #resultTable th, #resultTable td {
       font-size: 0.8rem;
       border: 1px solid #ddd;
       padding: 0.25rem 0.5rem;
@@ -56,28 +34,19 @@
 
     /* Record type row styling */
     .row-inbound {
-      background-color: #e8f5e8 !important;
-      /* Light green */
+      background-color: #e8f5e8 !important; /* Light green */
     }
-
     .row-outbound {
-      background-color: #e8f0ff !important;
-      /* Light blue */
+      background-color: #e8f0ff !important; /* Light blue */
     }
-
     .row-campaign {
-      background-color: #fff3e0 !important;
-      /* Light orange */
+      background-color: #fff3e0 !important; /* Light orange */
     }
-
     .row-cdr {
-      background-color: #f3e5f5 !important;
-      /* Light purple */
+      background-color: #f3e5f5 !important; /* Light purple */
     }
-
     .row-cdrs_all {
-      background-color: #fce4ec !important;
-      /* Light pink */
+      background-color: #fce4ec !important; /* Light pink */
     }
 
     /* Navigation links styling */
@@ -86,12 +55,12 @@
       gap: 0.5rem;
       align-items: center;
     }
-
+    
     .nav-links a.is-active {
       font-weight: bold;
       color: #3273dc !important;
     }
-
+    
     /* Virtual scrolling and load more styling */
     .is-loading-more {
       padding: 1rem;
@@ -100,27 +69,23 @@
       border-radius: 4px;
       margin: 0.5rem 0;
     }
-
+    
     .is-loading-more span {
       display: block;
       margin-bottom: 0.5rem;
       font-weight: bold;
       color: #555;
     }
-
+    
     #load-more-btn {
       transition: all 0.3s ease;
     }
-
+    
     #load-more-btn:hover {
       transform: translateY(-2px);
-      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
-
-    .is-hidden {
-      display: none;
-    }
-
+    .is-hidden { display: none; }
     /* Compact styling for status/error/loading messages */
     #loading,
     #errorBox,
@@ -128,17 +93,16 @@
       padding: 0.25rem 0.5rem !important;
       font-size: 0.75rem !important;
     }
-
     /* Center the Reports title horizontally */
     .headingg {
-      position: absolute;
-      top: 25px;
-      left: 50%;
-      transform: translateX(-50%);
-      text-align: center;
-      text-transform: uppercase;
-      color: #EF6F53;
-      z-index: 2;
+      position:absolute;
+      top:25px;
+      left:50%;
+      transform:translateX(-50%);
+      text-align:center;
+      text-transform:uppercase;
+      color:#EF6F53;
+      z-index:2;
     }
 
 
@@ -149,14 +113,13 @@
       color: #fff;
       padding: 0.1rem !important;
       font-size: 0.8rem !important;
-      margin-top: -0.5rem;
+      margin-top:-0.5rem;
     }
 
 
     /* Hover effect for Fetch Report button (when enabled) */
     .btn-fetch:hover:not([disabled]) {
-      background-color: #EF6F53 !important;
-      /* slightly darker blue */
+      background-color: #EF6F53 !important; /* slightly darker blue */
       border-color: #1976d2 !important;
       color: #fff !important;
     }
@@ -169,7 +132,7 @@
       color: #fff;
       padding: 0.1rem !important;
       font-size: 0.8rem !important;
-      margin-top: -0.5rem;
+      margin-top:-0.5rem;
     }
 
 
@@ -181,59 +144,46 @@
     }
 
 
-    /* Active filter styling - blue color for active filters */
+     /* Active filter styling - blue color for active filters */
     .filter-active {
       background-color: #1976d2 !important;
       border-color: #EF6F53 !important;
       color: white !important;
       font-weight: 500;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
 
 
     /* Row background colors based on record type */
     .row-inbound {
-      background-color: #e3f2fd;
-      /* light blue */
+      background-color: #e3f2fd; /* light blue */
     }
-
     .row-outbound {
-      background-color: #e8f5e9;
-      /* light green */
+      background-color: #e8f5e9; /* light green */
     }
-
     .row-campaign {
-      background-color: #ffebee;
-      /* lightest red */
+      background-color: #ffebee; /* lightest red */
     }
-
     .row-cdr {
-      background-color: #fff8e1;
-      /* light amber/yellow */
+      background-color: #fff8e1; /* light amber/yellow */
     }
-
     .row-cdrs_all {
-      background-color: #f3e5f5;
-      /* light purple */
+      background-color: #f3e5f5; /* light purple */
     }
-
+    
     /* Hover effects */
     .row-inbound:hover {
       background-color: #aeecbc !important;
     }
-
     .row-outbound:hover {
       background-color: #86edff !important;
     }
-
     .row-campaign:hover {
       background-color: #ecb181 !important;
     }
-
     .row-cdr:hover {
       background-color: #e1bee7 !important;
     }
-
     .row-cdrs_all:hover {
       background-color: #f8bbd9 !important;
     }
@@ -256,11 +206,11 @@
       transition: all 0.2s ease;
       display: inline-block;
     }
-
+    
     .eye-btn:hover {
       background-color: #276cda;
       transform: translateY(-1px);
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
 
     /* Eye button styling */
@@ -272,18 +222,18 @@
       border: 1px solid #ddd;
       transition: all 0.2s ease;
     }
-
+    
     .eye-btn:hover {
       background-color: #e0e0e0;
     }
-
+    
     /* History table styling */
     .history-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 0.8rem;
     }
-
+    
     .history-table th,
     .history-table td {
       border: 1px solid #dcdcdc;
@@ -291,50 +241,26 @@
       padding: 2px 4px;
       text-align: center;
     }
-
+    
     /* History modal specific styling */
-    .history-modal-card {
-      max-width: 800px;
-      margin: 0 auto;
-    }
-
-    .history-modal-card .modal-card-head {
-      background-color: #7b7b7b;
-      color: white;
-    }
-
-    .history-modal-card .modal-card-title {
-      color: white;
-    }
-
-    .history-modal-card .history-table {
-      width: 100%;
-    }
-
+    .history-modal-card { max-width: 800px; margin: 0 auto; }
+    .history-modal-card .modal-card-head { background-color: #7b7b7b; color: white; }
+    .history-modal-card .modal-card-title { color: white; }
+    .history-modal-card .history-table { width: 100%; }
+    
     /* History table header styling */
-    .history-table th {
-      background-color: #ffffff !important;
-      color: black !important;
+    .history-table th { 
+      background-color: #ffffff !important; 
+      color: black !important; 
       font-weight: bold !important;
       padding: 8px !important;
     }
-
+    
     /* History table styling */
-    .history-table thead {
-      background: #fdfdfd;
-      color: black;
-    }
-
-    .history-table tbody tr:nth-child(even) {
-      background-color: #f9f9f9;
-      color: black;
-    }
-
-    .history-table tbody tr:nth-child(odd) {
-      background-color: #f9f9f9;
-      color: black;
-    }
-
+    .history-table thead { background: #fdfdfd; color: black; }
+    .history-table tbody tr:nth-child(even) { background-color: #f9f9f9; color: black; }
+    .history-table tbody tr:nth-child(odd) { background-color: #f9f9f9; color: black; }
+    
     /* Recording modal styling */
     .recording-modal .modal-card {
       max-width: 400px;
@@ -342,29 +268,24 @@
       border-radius: 8px;
       overflow: hidden;
     }
-
     .recording-modal .modal-card-head {
       padding: 0.25rem;
       background-color: #4a4a4a;
       color: white;
     }
-
     .recording-modal .modal-card-body {
       padding: 0.75rem;
     }
-
     .recording-modal .modal-card-title {
       font-size: 0.9rem;
       color: white;
     }
-
     .compact-player-controls {
       display: flex;
       gap: 0.5rem;
       justify-content: center;
       align-items: center;
     }
-
     .compact-play-btn {
       width: 50px !important;
       height: 50px !important;
@@ -375,42 +296,33 @@
       font-size: 0.75rem;
       padding: 0.1rem 0.25rem;
     }
-
     .account-row input.is-small {
       font-size: 0.75rem;
       padding: 0.1rem 0.25rem;
     }
-
     /* Layout: form uses 30 % of the viewport height; table 50 % */
-    #filterForm {
-      max-height: 40vh;
-      /* 30 % of screen height */
-      overflow-y: auto;
-      /* scroll if it grows taller */
+    #filterForm{
+      max-height:40vh;   /* 30 % of screen height */
+      overflow-y:auto;   /* scroll if it grows taller */
     }
-
-    .table-container {
-      max-height: 37.5vh;
-      /* 50 % of screen height */
-      overflow-y: auto;
-      /* scroll the table body */
+    .table-container{
+      max-height:37.5vh;   /* 50 % of screen height */
+      overflow-y:auto;   /* scroll the table body */
     }
 
 
     /* --- Filter form compact spacing --- */
-    #filterForm .column {
-      padding-top: 0.25rem !important;
-      padding-bottom: 0.25rem !important;
+    #filterForm .column{
+      padding-top:0.25rem !important;
+      padding-bottom:0.25rem !important;
     }
-
-    #filterForm .field {
-      margin-bottom: 0.25rem !important;
+    #filterForm .field{
+      margin-bottom:0.25rem !important;
     }
-
     /* Smaller labels for datetime inputs (labels that are not .is-small) */
-    #filterForm .label:not(.is-small) {
-      font-size: 0.8rem;
-      margin-bottom: 0.1rem;
+    #filterForm .label:not(.is-small){
+      font-size:0.8rem;
+      margin-bottom:0.1rem;
     }
 
 
@@ -418,30 +330,23 @@
     #resultTable thead th {
       position: sticky;
       top: 0;
-      z-index: 3;
-      /* above body rows */
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      /* gradient background */
-      color: white;
-      /* white text for better contrast */
+      z-index: 3; /* above body rows */
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); /* gradient background */
+      color: white; /* white text for better contrast */
       font-weight: bold;
     }
-
+    
     /* Help icon on labels */
     .label.is-small {
       display: inline-flex;
       align-items: center;
-      gap: 0.25rem;
-      /* space between text and icon */
+      gap: 0.25rem; /* space between text and icon */
     }
 
     .label .help-icon {
-      font-size: 0.9rem;
-      /* slightly smaller than label text */
-      color: #9aa0a6;
-      /* subtle gray */
-      cursor: help;
-      /* indicates tooltip/help */
+      font-size: 0.9rem;          /* slightly smaller than label text */
+      color: #9aa0a6;             /* subtle gray */
+      cursor: help;               /* indicates tooltip/help */
       vertical-align: middle;
       line-height: 1;
       opacity: 0.9;
@@ -451,15 +356,13 @@
 
     .label .help-icon:hover,
     .label .help-icon:focus {
-      color: #1976d2;
-      /* your blue */
+      color: #1976d2;             /* your blue */
       opacity: 1;
       transform: translateY(-1px);
     }
 
     .label .help-icon i {
-      line-height: 1;
-      /* keep icon snug vertically */
+      line-height: 1;             /* keep icon snug vertically */
     }
 
     /* Custom tooltip styling */
@@ -506,19 +409,9 @@
       visibility: visible;
     }
 
-    /* Custom 7-column layout */
-    .column.is-one-seventh {
-      flex: none;
-      width: 14.28%;
-    }
 
-    .column.is-one-seventh {
-      flex: 0 0 14.28%;
-      max-width: 14.28%;
-    }
   </style>
 </head>
-
 <body>
   <div class="container">
     <div class="header-row">
@@ -543,17 +436,45 @@
       </div>
 
 
-      <!-- Advanced filters section - Row 1 (7 filters) -->
+      <!-- Advanced filters section - Row 1 -->
       <div class="columns is-multiline">
-        <div class="column is-one-seventh">
+        <!-- Row 1: First 6 filters -->
+        <!-- <div class="column is-2">
           <div class="field">
-            <label class="label is-small">Contact Number</label>
+            <label class="label is-small">Caller ID Number</label>
+            <div class="control">
+              <input id="caller_id_number" class="input is-small" type="text" placeholder="Caller number" />
+            </div>
+          </div>
+        </div>
+        <div class="column is-2">
+          <div class="field">
+            <label class="label is-small">Callee ID Number</label>
+            <div class="control">
+              <input id="callee_id_number" class="input is-small" type="text" placeholder="Callee number" />
+            </div>
+          </div>
+        </div> -->
+        <div class="column is-2">
+          <div class="field">
+            <label class="label is-small">
+              Contact Number
+              <span
+                class="help-icon"
+                title="Please remove the extra spaces"
+                aria-label="Please remove the extra spaces"
+              >
+              <i class="fas fa-circle-info"></i>
+            </span>
+          </label>
+          
             <div class="control">
               <input id="contact_number" class="input is-small" type="text" placeholder="Enter number" />
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Record Type</label>
             <div class="control">
@@ -568,7 +489,8 @@
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Agent Name</label>
             <div class="control">
@@ -576,7 +498,7 @@
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Extension</label>
             <div class="control">
@@ -584,75 +506,41 @@
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
-            <label class="label is-small">Queue/Campaign</label>
+            <label class="label is-small">Queue/Campaign Name</label>
             <div class="control">
-              <div class="select is-small is-fullwidth">
-                <select id="queue_campaign_name" name="queue_campaign_name">
-                  <option value="">All</option>
-                </select>
-              </div>
+              <input id="queue_campaign_name" class="input is-small" type="text" placeholder="Queue/Campaign name" />
             </div>
           </div>
         </div>
 
-
-        <div class="column is-one-seventh">
-          <div class="field">
-            <label class="label is-small">Call ID</label>
-            <div class="control">
-              <input id="call_id" class="input is-small" type="text" placeholder="Call ID" />
-            </div>
-          </div>
-        </div>
-        <div class="column is-one-seventh">
+        <!-- Row 2: Next 6 filters -->
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Agent Disposition</label>
             <div class="control">
-              <div class="select is-small is-fullwidth">
-                <select id="agent_disposition" name="agent_disposition">
-                  <option value="">All</option>
-                </select>
-              </div>
+              <input id="agent_disposition" class="input is-small" type="text" placeholder="Agent disposition" />
             </div>
           </div>
         </div>
-
-
-
-        <!-- Row 2 (7 filters) -->
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
-            <label class="label is-small">Sub Disp 1</label>
+            <label class="label is-small">Sub Disposition 1</label>
             <div class="control">
-              <input id="sub_disp_1" class="input is-small" type="text" placeholder="Sub disp 1" />
+              <input id="sub_disp_1" class="input is-small" type="text" placeholder="Sub disposition 1" />
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
-            <label class="label is-small">Sub Disp 2</label>
+            <label class="label is-small">Sub Disposition 2</label>
             <div class="control">
-              <input id="sub_disp_2" class="input is-small" type="text" placeholder="Sub disp 2" />
+              <input id="sub_disp_2" class="input is-small" type="text" placeholder="Sub disposition 2" />
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
-          <div class="field">
-            <label class="label is-small">Sub Disp 3</label>
-            <div class="control">
-              <div class="select is-small is-fullwidth">
-                <select id="sub_disp_3">
-                  <option value="">All</option>
-                  <option value="Resolved">Resolved</option>
-                  <option value="Not Resolved">Not Resolved</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Status</label>
             <div class="control">
@@ -667,7 +555,7 @@
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Campaign Type</label>
             <div class="control">
@@ -681,7 +569,7 @@
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Country</label>
             <div class="control">
@@ -689,7 +577,7 @@
             </div>
           </div>
         </div>
-        <div class="column is-one-seventh">
+        <div class="column is-2">
           <div class="field">
             <label class="label is-small">Transfer Call</label>
             <div class="control">
@@ -698,7 +586,7 @@
                   <option value="">All</option>
                   <option value="1">Yes</option>
                   <option value="0">No</option>
-                </select>
+                </select>                
               </div>
             </div>
           </div>
@@ -723,7 +611,7 @@
       <span id="recordInfo">Showing 0-0 of 0 records</span>
       <button class="pagination-next is-disabled" id="nextPage" disabled>Next</button>
     </div>
-
+    
     <!-- Record count will be displayed here -->
     <div id="stats" class="notification is-primary is-light is-hidden"></div>
 
@@ -755,5 +643,4 @@
   <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.2/build/global/luxon.min.js"></script>
   <script src="final-report.js"></script>
 </body>
-
 </html>

@@ -293,6 +293,7 @@ async function insertBatch(batch) {
       record.disposition || null,
       record.sub_disp_1 || null,
       record.sub_disp_2 || null,
+      record.sub_disp_3 || null,
       record.status || null,
       record.campaign_type || null,
       record.abandoned || null,
@@ -310,7 +311,7 @@ async function insertBatch(batch) {
     'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
     'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
     'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
-    'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2',
+    'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
     'status', 'campaign_type', 'abandoned', 'country', 'follow_up_notes',
     'agent_history', 'queue_history', 'lead_history', 'recording'
   ];
@@ -323,7 +324,7 @@ async function insertBatch(batch) {
       call_id, record_type, type, agent_name, extension, queue_campaign_name, 
       called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number,
       answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
-      agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2,
+      agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3,
       status, campaign_type, abandoned, country, follow_up_notes,
       agent_history, queue_history, lead_history, recording
     ) VALUES ${placeholders}
@@ -524,3 +525,4 @@ async function main() {
 }
 
 main().catch(console.error);
+

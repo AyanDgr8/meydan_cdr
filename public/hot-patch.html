@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLA Meydan</title>
+  <!-- Favicon so the tab shows the same logo -->
+  <link rel="icon" type="image/png" href="/uploads/MultyLogo.png" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .hero {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .hero-body {
+            padding: 1rem;
+        }
+        .titlee {
+            color: white !important;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+        .form-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        .datetime-input {
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            transition: all 0.3s ease;
+        }
+        .datetime-input:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.125em rgba(102, 126, 234, 0.25);
+        }
+        .generate-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .generate-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+        }
+        .back-link {
+            color: rgba(255,255,255,0.9);
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+        .back-link:hover {
+            color: white;
+        }
+        
+        /* Very small padding for compact layout */
+        .container {
+            padding: 0.25rem !important;
+        }
+        .box {
+            padding: 0.5rem !important;
+        }
+        .hero-body {
+            padding: 1rem !important;
+        }
+        .section {
+            padding: 1rem !important;
+        }
+        .form-container {
+            padding: 1rem !important;
+            margin-top: 1rem !important;
+        }
+        .column {
+            padding: 0.25rem !important;
+        }
+        .field {
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* Table styling with borders */
+        #resultsTable {
+            border-collapse: collapse;
+            width: 100%;
+        }
+        #resultsTable th, 
+        #resultsTable td {
+            border: 1px solid #ddd !important;
+            padding: 0.25rem !important;
+            font-size: 0.8rem;
+            text-align: center;
+            vertical-align: middle;
+        }
+        #resultsTable th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-weight: bold;
+            white-space: nowrap;
+            min-width: 80px;
+        }
+        
+        /* Compact table container */
+        .table-container {
+            max-height: 50vh;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+        }
+        
+        /* Compact stats and buttons */
+        #statsDisplay {
+            padding: 0.5rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+        #actionButtons {
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* Agent History Modal Styling */
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+        }
+        
+        .history-table th,
+        .history-table td {
+            border: 1px solid #dcdcdc !important;
+            font-size: 0.7rem;
+            padding: 4px 8px !important;
+            text-align: center;
+            vertical-align: middle;
+        }
+        
+        .history-table th {
+            background-color: #f5f5f5 !important;
+            color: #333 !important;
+            font-weight: bold;
+        }
+        
+        /* History modal specific styling */
+        .history-modal-card { 
+            max-width: 900px; 
+            margin: 0 auto; 
+        }
+        
+        .history-modal-card .modal-card-head { 
+            background-color: #667eea; 
+            color: white; 
+        }
+        
+        .history-modal-card .modal-card-title { 
+            color: white; 
+        }
+        
+        /* Eye button styling */
+        .eye-btn {
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background-color: #f0f8ff;
+            border: 1px solid #1976d2;
+            color: #1976d2;
+            font-size: 0.8rem;
+            transition: all 0.2s ease;
+            display: inline-block;
+        }
+        
+        .eye-btn:hover {
+            background-color: #1976d2;
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        /* Recording Player Improvements */
+        #waveform {
+            cursor: pointer;
+        }
+        
+        .modal-card {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        /* Compact form elements */
+        .compact-form .label {
+            font-size: 16px !important;
+            margin-bottom: 2px !important;
+            font-weight: 600;
+        }
+        
+        .compact-form .input {
+            font-size: 16px !important;
+            padding: 2px 4px !important;
+            height: 20px !important;
+            border-radius: 3px !important;
+        }
+        
+        .compact-form .button {
+            font-size: 16px !important;
+            padding: 5px 10px !important;
+            border-radius: 3px !important;
+            line-height: 1;
+        }
+        
+        .compact-form .field {
+            margin-bottom: 4px !important;
+        }
+        
+        .compact-form .column {
+            padding: 2px !important;
+        }
+        
+        .compact-form .box {
+            padding: 6px !important;
+        }
+        
+        /* Compact search filters */
+        .compact-filters .label {
+            font-size: 16px !important;
+            margin-bottom: 2px !important;
+        }
+        
+        .compact-filters .input {
+            font-size: 16px !important;
+            padding: 5px 10px !important;
+        }
+        
+        .compact-filters .button {
+            font-size: 16px !important;
+            padding: 5px 10px !important;
+        }
+        
+        .compact-filters .field {
+            margin-bottom: 3px !important;
+        }
+        
+        .compact-filters .column {
+            padding: 2px !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <section class="hero is-primary">
+        <div class="hero-body">
+            <div class="container">
+                <div class="level">
+                    <div class="level-left">
+                        <div class="level-item">
+                            <div>
+                                <h3 class="titlee is-2">
+                                    🔥 BLA Hot Patch Transfer Report for Meydan
+                                </h3>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- <div class="level-right">
+                        <div class="level-item">
+                            <a href="/" class="back-link">
+                                <span class="icon">
+                                    <i class="material-icons">arrow_back</i>
+                                </span>
+                                <span>Back to Main Reports</span>
+                            </a>
+                        </div>
+                    </div> -->
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <section class="section">
+        <div class="container">
+            <!-- Form Container -->
+            <div class="form-container compact-form">
+                <form id="hotPatchForm">
+                    <div class="columns is-vcentered">
+                        <div class="column is-4">
+                            <div class="field">
+                                <label class="label">Start Time</label>
+                                <div class="control">
+                                    <input type="datetime-local" 
+                                           id="startTime" 
+                                           name="startTime" 
+                                           class="input datetime-input" 
+                                           required>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="column is-4">
+                            <div class="field">
+                                <label class="label">End Time</label>
+                                <div class="control">
+                                    <input type="datetime-local" 
+                                           id="endTime" 
+                                           name="endTime" 
+                                           class="input datetime-input" 
+                                           required>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="column is-4">
+                            <div class="field">
+                                <label class="label">&nbsp;</label>
+                                <div class="control">
+                                    <button type="submit" 
+                                            class="button is-primary is-fullwidth generate-btn" 
+                                            id="generateBtn">
+                                        <span class="icon">
+                                            <i class="material-icons">analytics</i>
+                                        </span>
+                                        <span>Generate Report</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div id="loadingIndicator" class="has-text-centered is-hidden" style="margin-top: 2rem;">
+                <div class="box">
+                    <progress class="progress is-primary" max="100">Loading...</progress>
+                    <p class="has-text-grey">Generating BLA Hot Patch Transfer Report...</p>
+                </div>
+            </div>
+
+            <!-- Results Section -->
+            <div id="resultsSection" class="is-hidden" style="margin-top: 2rem;">
+                <!-- Stats Display -->
+                <div id="statsDisplay" class="box is-hidden">
+                    <div class="content">
+                        <!-- Stats will be populated here -->
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div id="actionButtons" class="buttons is-centered is-hidden" style="margin-bottom: 0.25rem;">
+                    <button class="button is-success" id="downloadCSV">
+                        <span class="icon">
+                            <i class="material-icons">download</i>
+                        </span>
+                        <span>Download CSV</span>
+                    </button>
+                </div>
+
+                <!-- Results Table -->
+                <div class="box">
+                    <div class="table-container">
+                        <table class="table is-fullwidth is-striped is-hoverable" id="resultsTable">
+                            <!-- Table content will be populated here -->
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Recording Modal (same as main page) -->
+    <div class="modal" id="recordingModal">
+        <div class="modal-background"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Call Recording Player</p>
+                <button class="delete" aria-label="close" id="closeRecordingModal"></button>
+            </header>
+            <section class="modal-card-body">
+                <div id="waveform"></div>
+                <div class="field is-grouped is-grouped-centered" style="margin-top: 1rem;">
+                    <div class="control">
+                        <button class="button is-primary" id="playPauseBtn">
+                            <span class="icon"><i class="material-icons">play_arrow</i></span>
+                            <span>Play</span>
+                        </button>
+                    </div>
+                    <div class="control">
+                        <button class="button" id="rewindBtn">
+                            <span class="icon"><i class="material-icons">replay_10</i></span>
+                        </button>
+                    </div>
+                    <div class="control">
+                        <button class="button" id="forwardBtn">
+                            <span class="icon"><i class="material-icons">forward_10</i></span>
+                        </button>
+                    </div>
+                    <div class="control">
+                        <div class="select">
+                            <select id="speedSelect">
+                                <option value="0.5">0.5x</option>
+                                <option value="1" selected>1x</option>
+                                <option value="1.25">1.25x</option>
+                                <option value="1.5">1.5x</option>
+                                <option value="2">2x</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="control">
+                        <button class="button is-info" id="downloadBtn">
+                            <span class="icon"><i class="material-icons">download</i></span>
+                            <span>Download</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="field" style="margin-top: 1rem;">
+                    <div class="control">
+                        <span id="currentTime">00:00</span> / <span id="totalTime">00:00</span>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- History Modal (same as main page) -->
+    <div class="modal" id="historyModal">
+        <div class="modal-background"></div>
+        <div class="modal-card history-modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title" id="historyModalTitle">Agent History</p>
+                <button class="delete" aria-label="close" id="closeHistoryModal"></button>
+            </header>
+            <section class="modal-card-body" id="historyModalBody">
+                <!-- History content will be populated here -->
+            </section>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/wavesurfer.js@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4/build/global/luxon.min.js"></script>
+    <script src="hot-patch.js"></script>
+</body>
+</html>

@@ -21,6 +21,8 @@ import bcrypt from 'bcrypt';
 import mysql from 'mysql2/promise';
 import dbService, { checkDataExists, clearCache } from './dbService.js';
 import { DateTime } from 'luxon';
+import { generateBLAHotPatchTransferReport } from './blaHotPatchTransferService.js';
+
 // import finalReportService from './finalReportService.js';
 // import recordingsFetcher from './recordingsFetcher.js';
 
@@ -74,31 +76,35 @@ const __dirname = path.dirname(__filename);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Route for hot-patch page
+app.get('/hot-patch', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'hot-patch.html'));
+});
 // --- Authentication setup ---
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key';
 
 // Create MySQL connection pool
-// const pool = mysql.createPool({
-//   host:  'localhost',
-//   user: 'root',
-//   password: 'Ayan@1012',
-//   database: 'meydan_main_cdr',
-//   port: 3306,
-//   waitForConnections: true,
-//   connectionLimit: 10,
-//   queueLimit: 0
-// });
-
 const pool = mysql.createPool({
-  host:"0.0.0.0",
-  user: 'multycomm',
-  password: 'WELcome@123',
+  host:  'localhost',
+  user: 'root',
+  password: 'Ayan@1012',
   database: 'meydan_main_cdr',
   port: 3306,
   waitForConnections: true,
-  connectionLimit: 20,
+  connectionLimit: 10,
   queueLimit: 0
 });
+
+// const pool = mysql.createPool({
+//   host:"0.0.0.0",
+//   user: 'multycomm',
+//   password: 'WELcome@123',
+//   database: 'meydan_main_cdr',
+//   port: 3306,
+//   waitForConnections: true,
+//   connectionLimit: 20,
+//   queueLimit: 0
+// });
 
 // Login
 app.post('/api/login', async (req, res) => {
@@ -548,6 +554,7 @@ app.get('/api/recordings/:id/meta', async (req, res) => {
 
   // Return cached value if present
   if (durationCache.has(id)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     return res.json({ duration: durationCache.get(id) });
   }
 
@@ -645,6 +652,9 @@ app.get('/api/recordings/:id', async (req, res) => {
       res.setHeader('Content-Duration', dur.toFixed(3));
     }
 
+    // FIX 5: Add Cache-Control for browser caching (1 hour)
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+
     // Stream data
     upstreamRes.data.pipe(res);
   } catch (err) {
@@ -655,6 +665,90 @@ app.get('/api/recordings/:id', async (req, res) => {
     res.status(status).json({ error: err.message });
   }
 });
+
+// Cache for recordings by call_id (1 hour TTL)
+const recordingsByCallIdCache = new Map();
+const RECORDING_CACHE_TTL = 3600000;
+// Track in-flight requests to prevent duplicate fetches
+const pendingRequests = new Map();
+
+// Proxy: GET /api/recordings/by-call-id/:yearMonthCallId
+// Fetches recordings by call_id from the upstream API
+app.get('/api/recordings/by-call-id/:yearMonthCallId', async (req, res) => {
+  const { yearMonthCallId } = req.params;
+  const account = req.query.account || 'default';
+  const cacheKey = `${account}:${yearMonthCallId}`;
+
+  // Return cached if available
+  const cached = recordingsByCallIdCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts < RECORDING_CACHE_TTL)) {
+    console.log(`⚡ Cache HIT: ${yearMonthCallId}`);
+    return res.json(cached.data);
+  }
+
+  // Check if request is already in-flight (deduplication)
+  if (pendingRequests.has(cacheKey)) {
+    console.log(`⏳ Waiting for pending request: ${yearMonthCallId}`);
+    try {
+      const result = await pendingRequests.get(cacheKey);
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Create promise for this request and store for deduplication
+  const fetchPromise = (async () => {
+    const startTime = Date.now();
+    console.log(`📞 Fetching recordings by call_id: ${yearMonthCallId}`);
+    
+    const tokenStart = Date.now();
+    const token = await getPortalToken(account);
+    console.log(`⏱️  Token fetch took: ${Date.now() - tokenStart}ms`);
+    
+    const upstreamUrl = `${process.env.BASE_URL}/api/v2/reports/recordings/by_call_id/${yearMonthCallId}`;
+    console.log(`🔗 Upstream URL: ${upstreamUrl}`);
+
+    const apiStart = Date.now();
+    const upstreamRes = await axios.get(upstreamUrl, {
+      httpsAgent,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-User-Agent': 'portal',
+        'X-Account-ID': process.env.ACCOUNT_ID_HEADER ?? account,
+        'Accept': 'application/json'
+      },
+      timeout: 30000  // Reduced from 900000ms to 30s
+    });
+    console.log(`⏱️  Upstream API took: ${Date.now() - apiStart}ms`);
+
+    console.log(`✅ Recordings fetched successfully for call_id: ${yearMonthCallId} (Total: ${Date.now() - startTime}ms)`);
+    
+    // Cache the result
+    recordingsByCallIdCache.set(cacheKey, { data: upstreamRes.data, ts: Date.now() });
+    
+    return upstreamRes.data;
+  })();
+
+  // Store pending request for deduplication
+  pendingRequests.set(cacheKey, fetchPromise);
+
+  try {
+    const data = await fetchPromise;
+    res.json(data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    console.error(`❌ Error fetching recordings by call_id ${yearMonthCallId}:`, err.response?.data || err.message);
+    res.status(status).json({ 
+      error: err.message,
+      details: err.response?.data 
+    });
+  } finally {
+    // Clean up pending request
+    pendingRequests.delete(cacheKey);
+  }
+});
+
 
 // SSL Certificate Management
 const loadSSLCertificates = () => {
@@ -809,7 +903,8 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     // Extract query parameters from request body
     const {
       start,
-      end,      
+      end,
+      call_id,
       contact_number,
       agent_name,
       extension,
@@ -818,6 +913,7 @@ app.post('/api/reports/progressive/init', async (req, res) => {
       agent_disposition,
       sub_disp_1,
       sub_disp_2,
+      sub_disp_3,
       status,
       campaign_type,
       country,
@@ -872,7 +968,7 @@ app.post('/api/reports/progressive/init', async (req, res) => {
       });
     }
     // Build SQL query directly - use indexed fields and limit columns for better performance
-    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, status, campaign_type, abandoned, country, follow_up_notes, agent_history, queue_history, lead_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE ';
+    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, status, campaign_type, abandoned, country, follow_up_notes, agent_history, queue_history, lead_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE ';
     const values = [];
     
     // Add date range condition (using both timestamp and formatted date)
@@ -925,6 +1021,11 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     console.log(`SQL date condition: filtering for date range from ${startDatePart} to ${endDatePart} (${dateConditions.length} days)`);
     
     // Add optional filters
+    if (call_id) {
+      sql += ' AND call_id LIKE ?';
+      values.push(`%${call_id}%`);
+    }
+    
     if (contact_number) {
       sql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
       values.push(`%${contact_number}%`, `%${contact_number}%`);
@@ -960,6 +1061,11 @@ app.post('/api/reports/progressive/init', async (req, res) => {
       values.push(`%${sub_disp_2}%`);
     }
     
+    if (sub_disp_3) {
+      sql += ' AND sub_disp_3 = ?';
+      values.push(sub_disp_3);
+    }
+    
     if (status) {
       sql += ' AND status LIKE ?';
       values.push(`%${status}%`);
@@ -993,7 +1099,7 @@ app.post('/api/reports/progressive/init', async (req, res) => {
       'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
       'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
       'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
-      'agent_hangup', 'agent_disposition', 'sub_disp_1', 'sub_disp_2',
+      'agent_hangup', 'agent_disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
       'status', 'campaign_type', 'abandoned', 'country', 
       'transfer_event', 'transfer_extension', 'transfer_queue_extension', 'transfer_type', 'csat',
       'created_at', 'updated_at'
@@ -1011,6 +1117,10 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     countSql += `(${dateConditions.join(' OR ')})`;
     let countValues = [...values.slice(0, dateConditions.length)];
     
+    if (call_id) {
+      countSql += ' AND call_id LIKE ?';
+      countValues.push(`%${call_id}%`);
+    }
     if (contact_number) {
       countSql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
       countValues.push(`%${contact_number}%`, `%${contact_number}%`);
@@ -1038,6 +1148,10 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     if (sub_disp_2) {
       countSql += ' AND sub_disp_2 LIKE ?';
       countValues.push(`%${sub_disp_2}%`);
+    }
+    if (sub_disp_3) {
+      countSql += ' AND sub_disp_3 = ?';
+      countValues.push(sub_disp_3);
     }
     if (status) {
       countSql += ' AND status LIKE ?';
@@ -1111,6 +1225,76 @@ app.post('/api/reports/progressive/init', async (req, res) => {
   }
 });
 
+app.get('/api/filters/queue-campaign', async (req, res) => {
+  try {
+    const { from_ts, to_ts } = req.query;
+
+    if (!from_ts || !to_ts) {
+      return res.status(400).json({
+        success: false,
+        error: 'from_ts and to_ts are required'
+      });
+    }
+
+    const sql = `
+      SELECT DISTINCT queue_campaign_name
+      FROM final_report
+      WHERE called_time BETWEEN ? AND ?
+      ORDER BY queue_campaign_name
+    `;
+
+    const rows = await dbService.query(sql, [from_ts, to_ts]);
+
+    res.json({
+      success: true,
+      data: rows.map(r => r.queue_campaign_name)
+    });
+
+  } catch (err) {
+    console.error('Queue/Campaign filter error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch queue/campaign list'
+    });
+  }
+});
+
+
+app.get('/api/filters/agent-disposition', async (req, res) => {
+  try {
+    const { from_ts, to_ts } = req.query;
+
+    if (!from_ts || !to_ts) {
+      return res.status(400).json({
+        success: false,
+        error: 'from_ts and to_ts are required'
+      });
+    }
+
+    const sql = `
+      SELECT DISTINCT agent_disposition
+      FROM final_report
+      WHERE called_time BETWEEN ? AND ?
+        AND agent_disposition <> ''
+      ORDER BY agent_disposition
+    `;
+
+    const rows = await dbService.query(sql, [from_ts, to_ts]);
+
+    res.json({
+      success: true,
+      data: rows.map(r => r.agent_disposition)
+    });
+
+  } catch (err) {
+    console.error('Agent disposition dropdown error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch agent disposition list'
+    });
+  }
+});
+
 app.get('/api/reports/search', async (req, res) => {
   const requestId = Math.random().toString(36).substring(2, 10);
   
@@ -1119,6 +1303,7 @@ app.get('/api/reports/search', async (req, res) => {
     const {
       start, // start timestamp or date
       end, // end timestamp or date
+      call_id,
       contact_number,
       agent_name,
       extension,
@@ -1127,6 +1312,7 @@ app.get('/api/reports/search', async (req, res) => {
       agent_disposition,
       sub_disp_1,
       sub_disp_2,
+      sub_disp_3,
       status,
       campaign_type,
       country,
@@ -1184,7 +1370,7 @@ app.get('/api/reports/search', async (req, res) => {
     }
     
     // Build SQL query directly - use indexed fields and limit columns for better performance
-    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE ';
+    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE ';
     const values = [];
     
     // Add date range condition (using both timestamp and formatted date)
@@ -1220,6 +1406,11 @@ app.get('/api/reports/search', async (req, res) => {
     console.log(`SQL date condition: filtering for date range from ${startDatePart} to ${endDatePart}`);
     
     // Add optional filters
+    if (call_id) {
+      sql += ' AND call_id LIKE ?';
+      values.push(`%${call_id}%`);
+    }
+    
     if (contact_number) {
       sql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
       values.push(`%${contact_number}%`, `%${contact_number}%`);
@@ -1253,6 +1444,11 @@ app.get('/api/reports/search', async (req, res) => {
     if (sub_disp_2) {
       sql += ' AND sub_disp_2 LIKE ?';
       values.push(`%${sub_disp_2}%`);
+    }
+    
+    if (sub_disp_3) {
+      sql += ' AND sub_disp_3 = ?';
+      values.push(sub_disp_3);
     }
     
     if (status) {
@@ -1297,7 +1493,7 @@ app.get('/api/reports/search', async (req, res) => {
       'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
       'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
       'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
-      'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2',
+      'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
       'status', 'campaign_type', 'abandoned', 'country', 'csat', 'created_at', 'updated_at'
     ];
     
@@ -1317,6 +1513,10 @@ app.get('/api/reports/search', async (req, res) => {
     countSql += "(called_time_formatted >= ? AND called_time_formatted <= ?)";
     let countValues = [...values.slice(0, dateConditions.length)];
     
+    if (call_id) {
+      countSql += ' AND call_id LIKE ?';
+      countValues.push(`%${call_id}%`);
+    }
     if (contact_number) {
       countSql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
       countValues.push(`%${contact_number}%`, `%${contact_number}%`);
@@ -1344,6 +1544,10 @@ app.get('/api/reports/search', async (req, res) => {
     if (sub_disp_2) {
       countSql += ' AND sub_disp_2 LIKE ?';
       countValues.push(`%${sub_disp_2}%`);
+    }
+    if (sub_disp_3) {
+      countSql += ' AND sub_disp_3 = ?';
+      countValues.push(sub_disp_3);
     }
     if (status) {
       countSql += ' AND status LIKE ?';
@@ -1473,6 +1677,169 @@ app.get('/api/reports/search', async (req, res) => {
   }
 });
 
+// BLA Hot Patch Transfer Report endpoint
+app.get('/api/reports/bla-hot-patch-transfer', async (req, res) => {
+  const requestId = Math.random().toString(36).substring(2, 10);
+  
+  try {
+    console.log(`🔥 BLA HOT PATCH: Starting transfer report generation (Request ID: ${requestId})`);
+    
+    // Extract query parameters
+    const {
+      start,
+      end,
+      agent_name,
+      extension,
+      queue_campaign_name,
+      sort_by = 'called_time',
+      sort_order = 'desc'
+    } = req.query;
+    
+    // Validate required parameters
+    if (!start || !end) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameters: start and end dates are required',
+        request_id: requestId
+      });
+    }
+    
+    console.log(`📅 BLA HOT PATCH: Date range: ${start} to ${end}`);
+    console.log(`🔍 BLA HOT PATCH: Filters - Agent: ${agent_name || 'All'}, Extension: ${extension || 'All'}, Queue/Campaign: ${queue_campaign_name || 'All'}`);
+    
+    // Generate the BLA Hot Patch Transfer report
+    const reportResult = await generateBLAHotPatchTransferReport(pool, {
+      start,
+      end,
+      agent_name,
+      extension,
+      queue_campaign_name
+    });
+    
+    if (!reportResult.success) {
+      console.error(`❌ BLA HOT PATCH ERROR: ${reportResult.error}`);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate BLA Hot Patch Transfer report',
+        error: reportResult.error,
+        request_id: requestId
+      });
+    }
+    
+    const { data, summary } = reportResult;
+    
+    // Apply sorting
+    const validSortColumns = [
+      'campaign_called_time', 'transfer_time', 'inbound_called_time', 
+      'campaign_agent_name', 'receiving_agent_name', 'campaign_customer_name',
+      'campaign_talk_duration', 'inbound_talk_duration', 'time_difference_seconds'
+    ];
+    
+    const sortColumn = validSortColumns.includes(sort_by) ? sort_by : 'campaign_called_time';
+    const sortDir = sort_order?.toLowerCase() === 'asc' ? 1 : -1;
+    
+    data.sort((a, b) => {
+      const aVal = a[sortColumn];
+      const bVal = b[sortColumn];
+      
+      if (aVal === bVal) return 0;
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
+      
+      if (typeof aVal === 'string') {
+        return aVal.localeCompare(bVal) * sortDir;
+      }
+      
+      return (aVal < bVal ? -1 : 1) * sortDir;
+    });
+    
+    console.log(`✅ BLA HOT PATCH SUCCESS: Generated report with ${data.length} linked transfer calls`);
+    console.log(`📊 BLA HOT PATCH SUMMARY:`, summary);
+    
+    // Return the report data
+    res.json({
+      success: true,
+      data: data,
+      summary: summary,
+      total: data.length,
+      request_id: requestId,
+      report_type: 'BLA_Hot_Patch_Transfer',
+      generated_at: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error(`❌ BLA HOT PATCH CRITICAL ERROR (Request ID: ${requestId}):`, error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error while generating BLA Hot Patch Transfer report',
+      error: error.message,
+      request_id: requestId
+    });
+  }
+});
+
+// BLA Hot Patch Transfer Report endpoint (POST for hot-patch page)
+app.post('/api/bla-hot-patch-transfer', async (req, res) => {
+  const requestId = Math.random().toString(36).substring(2, 10);
+  
+  try {
+    console.log(`🔥 BLA HOT PATCH POST: Starting transfer report generation (Request ID: ${requestId})`);
+    
+    // Extract body parameters
+    const { startEpoch, endEpoch } = req.body;
+    
+    // Validate required parameters
+    if (!startEpoch || !endEpoch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameters: startEpoch and endEpoch are required',
+        request_id: requestId
+      });
+    }
+    
+    console.log(`🔥 BLA HOT PATCH POST: Time range - Start: ${startEpoch} (${new Date(startEpoch * 1000).toISOString()}), End: ${endEpoch} (${new Date(endEpoch * 1000).toISOString()})`);
+    
+    // Generate the report
+    const reportResult = await generateBLAHotPatchTransferReport(pool, {
+      start: new Date(startEpoch * 1000).toISOString(),
+      end: new Date(endEpoch * 1000).toISOString()
+    });
+    
+    if (!reportResult.success) {
+      console.error(`❌ BLA HOT PATCH POST ERROR: ${reportResult.error}`);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to generate BLA Hot Patch Transfer report',
+        error: reportResult.error,
+        request_id: requestId
+      });
+    }
+    
+    console.log(`✅ BLA HOT PATCH POST: Report generated successfully with ${reportResult.data?.length || 0} records`);
+    
+    // Return the report data
+    res.json({
+      success: true,
+      message: 'BLA Hot Patch Transfer report generated successfully',
+      data: reportResult.data,
+      summary: reportResult.summary,
+      request_id: requestId,
+      timestamp: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error(`❌ BLA HOT PATCH POST CRITICAL ERROR (Request ID: ${requestId}):`, error);
+    
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error while generating BLA Hot Patch Transfer report',
+      error: error.message,
+      request_id: requestId
+    });
+  }
+});
+
 // // Transfer Queue Report API endpoint
 // app.get('/api/reports/transfer-queue', async (req, res) => {
 //   const requestId = Math.random().toString(36).substring(2, 10);
@@ -1541,7 +1908,7 @@ app.get('/api/reports/search', async (req, res) => {
 //     }
     
 //     // Build SQL query for transfer queue records only - optimized for performance
-//     let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report WHERE ';
+//     let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report WHERE ';
 //     const values = [];
     
 //     // **CRITICAL**: Start with transfer_queue_extension filter for better performance

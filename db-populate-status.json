@@ -1,18 +1,18 @@
 {
-  "serviceStarted": "2025-11-28T06:46:27.319Z",
-  "status": "success",
+  "serviceStarted": "2026-02-02T13:55:13.826Z",
+  "status": "stopped",
   "config": {
     "intervalMinutes": 5,
     "lookbackHours": 1
   },
-  "lastUpdated": "2025-12-05T12:59:51.920Z",
-  "lastRun": "2025-12-05T12:59:51.919Z",
-  "duration": "13.19s",
-  "recordsAdded": 288,
+  "lastUpdated": "2026-02-02T13:55:34.735Z",
+  "lastRun": "2026-02-02T13:55:19.755Z",
+  "duration": "5.93s",
+  "recordsAdded": 625,
   "cdrRecordsAdded": 0,
   "followUpNotesUpdated": 0,
-  "nextRun": "2025-12-05T13:04:51.920Z",
+  "nextRun": "2026-02-02T14:00:19.755Z",
   "reason": "SIGINT received",
-  "error": "Access denied for user 'root'@'localhost' (using password: YES)",
-  "dispositionUpdates": 58
+  "error": "",
+  "dispositionUpdates": 0
 }

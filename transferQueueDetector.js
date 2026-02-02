@@ -16,6 +16,80 @@ export function isQueueExtension(extension) {
   return extStr.startsWith('8') && extStr.length === 4 && parseInt(extStr) >= 8000 && parseInt(extStr) <= 8999;
 }
 
+
+/**
+ * Get agent name from agent_details table by extension
+ * @param {string} extension - The agent extension to lookup
+ * @param {Object} dbConfig - Database configuration object
+ * @returns {Promise<string|null>} - Agent name or null if not found
+ */
+export async function getAgentNameByExtension(extension, dbConfig) {
+  if (!extension || !dbConfig) {
+    return null;
+  }
+
+  let connection = null;
+  try {
+    connection = await mysql.createConnection(dbConfig);
+    
+    const [rows] = await connection.execute(
+      'SELECT agent_name FROM agent_details WHERE extension = ? LIMIT 1',
+      [String(extension)]
+    );
+    
+    if (rows.length > 0) {
+      return rows[0].agent_name;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error(`Error looking up agent name for extension ${extension}:`, error.message);
+    return null;
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
+  }
+}
+
+/**
+ * Lookup multiple agent names by extensions in batch
+ * @param {Array<string>} extensions - Array of extensions to lookup
+ * @param {Object} dbConfig - Database configuration object
+ * @returns {Promise<Object>} - Object mapping extensions to agent names
+ */
+export async function getAgentNamesByExtensions(extensions, dbConfig) {
+  if (!extensions || !Array.isArray(extensions) || extensions.length === 0 || !dbConfig) {
+    return {};
+  }
+
+  let connection = null;
+  try {
+    connection = await mysql.createConnection(dbConfig);
+    
+    // Create placeholders for the IN clause
+    const placeholders = extensions.map(() => '?').join(',');
+    const query = `SELECT extension, agent_name FROM agent_details WHERE extension IN (${placeholders})`;
+    
+    const [rows] = await connection.execute(query, extensions.map(ext => String(ext)));
+    
+    // Convert to object mapping extension -> agent_name
+    const agentMap = {};
+    rows.forEach(row => {
+      agentMap[row.extension] = row.agent_name;
+    });
+    
+    return agentMap;
+  } catch (error) {
+    console.error(`Error looking up agent names for extensions:`, error.message);
+    return {};
+  } finally {
+    if (connection) {
+      await connection.end();
+    }
+  }
+}
+
 /**
  * Find matching inbound call for an outbound call with transfer to queue extension
  * @param {Object} outboundCall - The outbound call record with transfer to queue extension

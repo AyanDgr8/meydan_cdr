@@ -154,7 +154,8 @@ function detectTransferEvents(agentHistory, callType, call = {}) {
       // Inbound calls use type="attended" and event="transfer" for actual transfers
       return type === 'attended' && evt === 'transfer';
     } else if (normalizedCallType === 'outbound') {
-      return type === 'transfer' && evt === 'transfer';
+      // Outbound calls can use either type="transfer" OR type="attended" with event="transfer"
+      return ((type === 'transfer' || type === 'attended') && evt === 'transfer');
     } else if (normalizedCallType === 'campaign') {
       // Campaign calls use type="Transfer" (capital T originally), match case-insensitively
       return type === 'transfer';
@@ -879,6 +880,7 @@ function processCDRRecord(record) {
   processed['Agent Disposition'] = record.agent_disposition || '';
   processed.Sub_disp_1 = record.sub_disp_1 || record.sub_disposition_1 || '';
   processed.Sub_disp_2 = record.sub_disp_2 || record.sub_disposition_2 || '';
+  processed.Sub_disp_3 = record.sub_disp_3 || record.sub_disposition_3 || '';
   
   // Additional fields
   // Extract follow_up_notes directly from the response data
@@ -2109,22 +2111,31 @@ export function processRecordData(record, reportType, cdrAllRecords = []) {
     }
     record['Agent Disposition'] = record.agent_disposition || '';
     
-    // Handle subdispositions
+    // Handle subdispositions (including third level)
     if (record.agent_subdisposition) {
       if (typeof record.agent_subdisposition === 'object' && record.agent_subdisposition.name) {
         record['Sub_disp_1'] = record.agent_subdisposition.name;
         if (record.agent_subdisposition.subdisposition && record.agent_subdisposition.subdisposition.name) {
           record['Sub_disp_2'] = record.agent_subdisposition.subdisposition.name;
+          // Extract third level subdisposition (e.g., "Not Resolved" / "Resolved")
+          if (record.agent_subdisposition.subdisposition.subdisposition && record.agent_subdisposition.subdisposition.subdisposition.name) {
+            record['Sub_disp_3'] = record.agent_subdisposition.subdisposition.subdisposition.name;
+          } else {
+            record['Sub_disp_3'] = '';
+          }
         } else {
           record['Sub_disp_2'] = '';
+          record['Sub_disp_3'] = '';
         }
       } else {
         record['Sub_disp_1'] = record.agent_subdisposition.toString();
         record['Sub_disp_2'] = '';
+        record['Sub_disp_3'] = '';
       }
     } else {
       record['Sub_disp_1'] = '';
       record['Sub_disp_2'] = '';
+      record['Sub_disp_3'] = '';
     }
     
     // Extract follow_up_notes directly from the response
@@ -2155,7 +2166,6 @@ export function processRecordData(record, reportType, cdrAllRecords = []) {
       record['Caller ID Number'] = record.caller_id_number || '';
       record['Caller ID / Lead Name'] = record.caller_id_name || '';
       record['Callee ID / Lead number'] = record.to || record.destination || '';
-    } else if (reportType === 'queueOutboundCalls') {
     } else if (reportType === 'queueOutboundCalls') {
       // For outbound calls: caller_id_number should be the agent extension, callee_id_number should be the customer number
       const agentExtension = record.agent_ext || 
@@ -2208,21 +2218,26 @@ export function processRecordData(record, reportType, cdrAllRecords = []) {
       record['Agent Hangup'] = 'No'; // Default for campaigns
       record['Agent Disposition'] = agentDisposition;
       record['System Disposition'] = systemDisposition;
-      // Handle subdisposition formatting properly
+      // Handle subdisposition formatting properly (including third level)
       if (record.agent_subdisposition) {
         if (typeof record.agent_subdisposition === 'object' && record.agent_subdisposition.name) {
           record['Sub_disp_1'] = record.agent_subdisposition.name;
           record['Sub_disp_2'] = record.agent_subdisposition.subdisposition?.name ?? '';
+          // Extract third level subdisposition (e.g., "Not Resolved" / "Resolved")
+          record['Sub_disp_3'] = record.agent_subdisposition.subdisposition?.subdisposition?.name ?? '';
         } else if (typeof record.agent_subdisposition === 'string') {
           record['Sub_disp_1'] = record.agent_subdisposition;
           record['Sub_disp_2'] = '';
+          record['Sub_disp_3'] = '';
         } else {
           record['Sub_disp_1'] = '';
           record['Sub_disp_2'] = '';
+          record['Sub_disp_3'] = '';
         }
       } else {
         record['Sub_disp_1'] = '';
         record['Sub_disp_2'] = '';
+        record['Sub_disp_3'] = '';
       }
       // Extract follow_up_notes directly from the response
       const followUpNotesCampaign = record.follow_up_notes || '';
@@ -2697,6 +2712,7 @@ export async function fetchReportFromAPI(report, tenant, params = {}) {
       record['Agent Disposition'] = record.agent_disposition ?? '';
       record['Sub_disp_1'] = record.sub_disp_1 ?? record.sub_disposition_1 ?? '';
       record['Sub_disp_2'] = record.sub_disp_2 ?? record.sub_disposition_2 ?? '';
+      record['Sub_disp_3'] = record.sub_disp_3 ?? record.sub_disposition_3 ?? '';
       record['Answered time'] = record.answered_time ? formatTimestamp(record.answered_time) : '';
       record['Hangup time'] = record.hangup_time ? formatTimestamp(record.hangup_time) : '';
       record['Wait Duration'] = record.wait_duration ? formatDuration(record.wait_duration) : '';
@@ -3152,8 +3168,8 @@ function processCampaignRecord(record, { forReport = false, sub1 = '', sub2 = ''
     return totalHoldDuration > 0 ? totalHoldDuration.toFixed(2) : '';
   }
   
-  // Extract subdisposition data with enhanced error handling
-  const [extractedSub1, extractedSub2] = (() => {
+  // Extract subdisposition data with enhanced error handling (including third level)
+  const [extractedSub1, extractedSub2, extractedSub3] = (() => {
     try {
       let sd = record.agent_subdisposition ?? null;
       
@@ -3168,33 +3184,36 @@ function processCampaignRecord(record, { forReport = false, sub1 = '', sub2 = ''
           sd = JSON.parse(sd);
         } catch (parseError) {
           // If not JSON, treat as plain string for sub_disp_1
-          return [sd, ''];
+          return [sd, '', ''];
         }
       }
       
       // Handle null, undefined, or non-object values
       if (!sd || typeof sd !== 'object') {
-        return ['', ''];
+        return ['', '', ''];
       }
       
-      // Extract nested subdisposition data
+      // Extract nested subdisposition data (including third level)
       const first = sd.name ?? sd.subdisposition_name ?? sd.disposition ?? '';
       const second = sd.subdisposition?.name ?? sd.subdisposition?.subdisposition_name ?? '';
+      const third = sd.subdisposition?.subdisposition?.name ?? '';
       
       // Ensure strings are returned (not objects)
       const firstStr = typeof first === 'object' ? JSON.stringify(first) : String(first || '');
       const secondStr = typeof second === 'object' ? JSON.stringify(second) : String(second || '');
+      const thirdStr = typeof third === 'object' ? JSON.stringify(third) : String(third || '');
       
-      return [firstStr, secondStr];
+      return [firstStr, secondStr, thirdStr];
     } catch (error) {
       console.warn('Error extracting subdisposition data:', error, 'Record:', record.call_id);
-      return ['', ''];
+      return ['', '', ''];
     }
   })();
   
   // Use provided subdispositions for final_report or extracted ones for frontend
   const finalSub1 = forReport ? (sub1 || extractedSub1) : extractedSub1;
   const finalSub2 = forReport ? (sub2 || extractedSub2) : extractedSub2;
+  const finalSub3 = extractedSub3;
   
   // Sanitize subdisposition fields for final_report
   const sanitizedSub1 = forReport ? 
@@ -3203,6 +3222,9 @@ function processCampaignRecord(record, { forReport = false, sub1 = '', sub2 = ''
   const sanitizedSub2 = forReport ? 
     (typeof finalSub2 === 'object' && finalSub2 !== null ? (finalSub2.name || JSON.stringify(finalSub2)) : (finalSub2 || '')) :
     finalSub2;
+  const sanitizedSub3 = forReport ? 
+    (typeof finalSub3 === 'object' && finalSub3 !== null ? (finalSub3.name || JSON.stringify(finalSub3)) : (finalSub3 || '')) :
+    finalSub3;
   
   // Extract agent name
   let agentName = extractCampaignAgentName(record.agent_history) || (record.agent_name ?? '');
@@ -3343,6 +3365,7 @@ function processCampaignRecord(record, { forReport = false, sub1 = '', sub2 = ''
       })(),
       'Sub_disp_1': sanitizedSub1,
       'Sub_disp_2': sanitizedSub2,
+      'Sub_disp_3': sanitizedSub3,
       'Follow up notes': followUpNotes,
       'Called Time': formatTimestamp(record.timestamp ?? record.datetime) ?? '',
       'Answered time': answeredTime || (formatTimestamp(record.agent_answer_time) ?? ''),
@@ -3385,6 +3408,7 @@ function processCampaignRecord(record, { forReport = false, sub1 = '', sub2 = ''
       })(),
       'Sub_disp_1': sanitizedSub1,
       'Sub_disp_2': sanitizedSub2,
+      'Sub_disp_3': sanitizedSub3,
       'Follow up notes': followUpNotes,
       'Called Time': formatTimestamp(record.timestamp ?? record.datetime) ?? '',
       'Answered time': answeredTime || (formatTimestamp(record.agent_answer_time) ?? ''),

@@ -1,5 +1,3 @@
-// public/final-report.js
-
 // Dubai timezone for consistent date handling
 const TIMEZONE = 'Asia/Dubai';
 
@@ -191,6 +189,7 @@ function getFormValues() {
     end: endDate,
     // caller_id_number: document.getElementById('caller_id_number').value,
     // callee_id_number: document.getElementById('callee_id_number').value,
+    call_id: document.getElementById('call_id').value,
     contact_number: document.getElementById('contact_number').value,
     agent_name: document.getElementById('agent_name').value,
     extension: document.getElementById('extension').value,
@@ -199,6 +198,7 @@ function getFormValues() {
     agent_disposition: document.getElementById('agent_disposition').value,
     sub_disp_1: document.getElementById('sub_disp_1').value,
     sub_disp_2: document.getElementById('sub_disp_2').value,
+    sub_disp_3: document.getElementById('sub_disp_3').value,
     status: document.getElementById('status').value,
     campaign_type: document.getElementById('campaign_type').value,
     country: document.getElementById('country').value,
@@ -210,6 +210,80 @@ function getFormValues() {
   
   return formData;
 }
+
+
+async function loadQueueCampaignDropdown(fromTs, toTs) {
+  try {
+    const res = await fetch(
+      `/api/filters/queue-campaign?from_ts=${fromTs}&to_ts=${toTs}`
+    );
+    const data = await res.json();
+
+    if (!data.success) throw new Error(data.error);
+
+    const select = document.getElementById('queue_campaign_name');
+
+    // ðŸ”‘ Preserve current selection
+    const selectedValue = select.value;
+
+    // Reset dropdown
+    select.innerHTML = '<option value="">All</option>';
+
+    data.data.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+
+      // ðŸ”‘ Restore selected option
+      if (name === selectedValue) {
+        opt.selected = true;
+      }
+
+      select.appendChild(opt);
+    });
+
+  } catch (err) {
+    console.error('Failed to load queue/campaign dropdown:', err);
+  }
+}
+
+
+async function loadAgentDispositionDropdown(fromTs, toTs) {
+  try {
+    const res = await fetch(
+      `/api/filters/agent-disposition?from_ts=${fromTs}&to_ts=${toTs}`
+    );
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    const select = document.getElementById('agent_disposition');
+
+    // ðŸ”‘ Preserve currently selected value
+    const selectedValue = select.value;
+
+    // Reset dropdown
+    select.innerHTML = '<option value="">All</option>';
+
+    data.data.forEach(value => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+
+      // ðŸ”‘ Restore selection if it existed
+      if (value === selectedValue) {
+        opt.selected = true;
+      }
+
+      select.appendChild(opt);
+    });
+
+  } catch (err) {
+    console.error('Failed to load agent disposition dropdown:', err);
+  }
+}
+
+
 
 // Show error message
 function showError(message) {
@@ -259,9 +333,11 @@ function createTableHeaders() {
     'Wait Duration (hh:mm:ss)',
     'Talk Duration (hh:mm:ss)',
     'Hold Duration (hh:mm:ss)',
+    'Hold Duration Intervals',
     'Agent Disposition',
     'Sub Disp 1',
     'Sub Disp 2',
+    'Sub Disp 3',
     'Follow-up Notes',
     'Agent Hangup',
     'Status',
@@ -269,12 +345,12 @@ function createTableHeaders() {
     'Abandoned',
     'Country',
     'Transfer',
-    'Transfer To Agent Extension',
-    'Transfer To Queue Extension',
+    'Transfer To Extension',
     'Transfer Type',
     'Agent History',
     'Queue History',
     'Recording',
+    'All Recordings',
     'Call ID',
     'CSAT',
     'System Disposition',
@@ -348,6 +424,27 @@ function createTableRows(data) {
       wait_duration: row.wait_duration,
       talk_duration: row.talk_duration,
       hold_duration: row.hold_duration,
+      hold_duration_intervals: row.hold_duration_intervals,
+    });
+    
+    // Debug: Log all available keys in the row object
+    console.log('All row keys:', Object.keys(row));
+    
+    // Debug: Check if hold_duration_intervals exists with different casing
+    console.log('Hold duration intervals check:', {
+      'hold_duration_intervals': row.hold_duration_intervals,
+      'Hold Duration Intervals': row['Hold Duration Intervals'],
+      'holdDurationIntervals': row.holdDurationIntervals,
+      'hold_duration_intervals_exists': 'hold_duration_intervals' in row
+    });
+    
+    // Debug: Check for any field that might contain hold intervals
+    const possibleHoldFields = Object.keys(row).filter(key => 
+      key.toLowerCase().includes('hold') && key.toLowerCase().includes('interval')
+    );
+    console.log('Possible hold interval fields:', possibleHoldFields);
+    possibleHoldFields.forEach(field => {
+      console.log(`${field}:`, row[field]);
     });
     
     // Create row cells array
@@ -386,25 +483,38 @@ function createTableRows(data) {
       row.hold_duration ? 
         (typeof row.hold_duration === 'string' && row.hold_duration.includes(':') ? 
           row.hold_duration : formatDuration(row.hold_duration)) : '00:00:00',
+      
+      // Handle hold_duration_intervals - display as formatted text with line breaks
+      // Check multiple possible field names for hold duration intervals
+      (() => {
+        const holdIntervals = row.hold_duration_intervals || 
+                            row['Hold Duration Intervals'] || 
+                            row.holdDurationIntervals || 
+                            row['hold_duration_intervals'] ||
+                            '';
+        return holdIntervals ? holdIntervals.replace(/\n/g, '<br>') : '';
+      })(),
+      
       row.agent_disposition || '',
       row.sub_disp_1 || '',
       row.sub_disp_2 || '',
+      row.sub_disp_3 || '',
       row.follow_up_notes || '',
       row.agent_hangup || '',
       row.status || '',
       row.campaign_type || '',
       row.abandoned || '',
       row.country || '',
-      row.transfer_event === 1 || row.transfer_event === true ? 'Yes' : 'No',  // Transfer column
-      row.transfer_extension || '',  // Transfer to agent extension column
-      row.transfer_queue_extension || '',  // Transfer to queue extension column
-      row.transfer_type || '',  // Transfer type column
-      agentHistoryContent,
-      queueHistoryContent,
+      row.transfer_event ? 'Yes' : 'No',
+      row.transfer_extension || '',
+      row.transfer_type || '',
+      processHistoryData(row.agent_history, 'agent'),
+      processHistoryData(row.queue_history, 'queue'),
       row.recording ? createRecordingLink(row.recording) : '',
+      (row.call_id && row.called_time) ? createAllRecordingsButton(row.call_id, row.called_time) : '',
       row.call_id || '',
       row.CSAT || row.csat || '',
-      row.system_disposition || row.disposition || ''
+      row.system_disposition || row.disposition || '',
     ];
     
     // Add S.No. column first
@@ -431,30 +541,224 @@ function createTableRows(data) {
   return tbody;
 }
 
-// Create recording link/button
+
+
+// Create recording link/button - plays single recording directly (no API call)
 function createRecordingLink(recordingUrl) {
   if (!recordingUrl) return '';
   
   const button = document.createElement('button');
   button.className = 'button is-small is-info is-rounded play-btn';
   button.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
-  button.title = 'Play recording';
+  button.title = 'Play this recording';
   
-  // Ensure the URL is properly formatted
+  // Construct direct recording URL
   let cleanUrl = recordingUrl;
-  // If it's just an ID, assume it's a relative path to the API endpoint
   if (!recordingUrl.includes('/') && !recordingUrl.includes('http')) {
     cleanUrl = `/api/recordings/${recordingUrl}?account=default`;
   }
   
   button.dataset.src = cleanUrl;
-  button.dataset.meta = `${cleanUrl}/meta`;
   
   return button;
 }
 
+// Create "All Recordings" button - fetches all recordings for this call via API
+function createAllRecordingsButton(callId, calledTime) {
+  if (!callId || !calledTime) return '';
+  
+  const button = document.createElement('button');
+  button.className = 'button is-small is-warning is-rounded all-recordings-btn';
+  button.innerHTML = '<span class="icon is-small"><i class="material-icons">library_music</i></span>';
+  button.title = 'View all recordings for this call';
+  
+  button.dataset.callId = callId;
+  button.dataset.calledTime = calledTime;
+  
+  return button;
+}
+
+// Fetch recordings by call_id
+async function fetchRecordingsByCallId(callId, calledTime) {
+  try {
+    console.log('fetchRecordingsByCallId called with:', { callId, calledTime, type: typeof calledTime });
+    
+    // Extract year-month from called_time (format: YYYYMM)
+    let yearMonth = '';
+    
+    if (!calledTime) {
+      throw new Error('called_time is required but was not provided');
+    }
+    
+    // Handle different date formats
+    // First, check if it's a numeric string (timestamp as string)
+    if (typeof calledTime === 'string' && /^\d+$/.test(calledTime)) {
+      console.log('Converting numeric string to number:', calledTime);
+      calledTime = parseInt(calledTime, 10);
+    }
+    
+    if (typeof calledTime === 'number') {
+      // Unix timestamp (seconds or milliseconds)
+      console.log('Processing numeric timestamp:', calledTime);
+      const timestampMs = calledTime > 10000000000 ? calledTime : calledTime * 1000;
+      const dateObj = new Date(timestampMs);
+      
+      if (isNaN(dateObj.getTime())) {
+        throw new Error(`Invalid timestamp: ${calledTime}`);
+      }
+      
+      const year = dateObj.getFullYear();
+      const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+      yearMonth = `${year}${month}`;
+      console.log('Extracted yearMonth from timestamp:', yearMonth, 'Date:', dateObj.toISOString());
+      
+    } else if (typeof calledTime === 'string') {
+      console.log('Processing string date:', calledTime);
+      
+      // String format (DD/MM/YYYY, HH:MM:SS or YYYY-MM-DD HH:MM:SS)
+      if (calledTime.includes('/')) {
+        // DD/MM/YYYY format
+        const parts = calledTime.split(',')[0].split('/');
+        if (parts.length >= 3) {
+          yearMonth = parts[2] + parts[1]; // YYYYMM
+          console.log('Extracted yearMonth from DD/MM/YYYY:', yearMonth);
+        }
+      } else if (calledTime.includes('-')) {
+        // YYYY-MM-DD format
+        const parts = calledTime.split(' ')[0].split('-');
+        if (parts.length >= 3) {
+          yearMonth = parts[0] + parts[1]; // YYYYMM
+          console.log('Extracted yearMonth from YYYY-MM-DD:', yearMonth);
+        }
+      }
+      
+      // If string parsing failed, try to parse as date
+      if (!yearMonth) {
+        const dateObj = new Date(calledTime);
+        if (!isNaN(dateObj.getTime())) {
+          const year = dateObj.getFullYear();
+          const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+          yearMonth = `${year}${month}`;
+          console.log('Extracted yearMonth from parsed string:', yearMonth);
+        }
+      }
+    }
+    
+    if (!yearMonth) {
+      throw new Error(`Could not determine year-month from called_time: ${calledTime} (type: ${typeof calledTime})`);
+    }
+    
+    // Use backend proxy endpoint to avoid CORS issues
+    const apiUrl = `/api/recordings/by-call-id/${yearMonth}-${callId}?account=default`;
+    
+    console.log('Fetching recordings from backend proxy:', apiUrl);
+    
+    // Make the API request through the backend proxy
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API error response:', errorText);
+      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    console.log('Recordings response:', data);
+    console.log('Number of recordings:', data.recordings ? data.recordings.length : 0);
+    console.log('Recordings array:', data.recordings);
+    
+    return data;
+  } catch (error) {
+    console.error('Error fetching recordings by call_id:', error);
+    throw error;
+  }
+}
+
+// Display multiple recordings in a modal
+function showRecordingsModal(recordings) {
+  if (!recordings || recordings.length === 0) {
+    alert('No recordings found for this call');
+    return;
+  }
+  
+  // Create modal
+  const modal = document.createElement('div');
+  modal.className = 'modal is-active recordings-list-modal';
+  
+  // Build recordings list HTML
+  let recordingsHtml = '';
+  recordings.forEach((recording, index) => {
+    recordingsHtml += `
+      <div class="box" style="margin-bottom: 1rem;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div>
+            <strong>Recording ${index + 1}</strong>
+            <br>
+            <small style="font-family: monospace; color: #666;">${recording.id}</small>
+          </div>
+          <button class="button is-info is-rounded play-recording-btn" 
+                  data-recording-id="${recording.id}" 
+                  data-recording-name="${recording.id}">
+            <span class="icon"><i class="material-icons">play_arrow</i></span>
+            <span>Play</span>
+          </button>
+        </div>
+      </div>
+    `;
+  });
+  
+  modal.innerHTML = `
+    <div class="modal-background"></div>
+    <div class="modal-card">
+      <header class="modal-card-head">
+        <p class="modal-card-title">Recordings (${recordings.length})</p>
+        <button class="delete" aria-label="close"></button>
+      </header>
+      <section class="modal-card-body">
+        ${recordingsHtml}
+      </section>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Close modal handlers
+  const closeModal = () => {
+    document.body.removeChild(modal);
+  };
+  
+  modal.querySelector('.modal-background').onclick = closeModal;
+  modal.querySelector('.delete').onclick = closeModal;
+  document.addEventListener('keydown', function escHandler(e) {
+    if (e.key === 'Escape') {
+      closeModal();
+      document.removeEventListener('keydown', escHandler);
+    }
+  });
+  
+  // Add click handlers for play buttons
+  modal.querySelectorAll('.play-recording-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const recordingId = this.dataset.recordingId;
+      const recordingName = this.dataset.recordingName;
+      
+      // Use backend proxy endpoint to avoid CORS issues
+      const recordingUrl = `/api/recordings/${recordingId}?account=default`;
+      
+      console.log('Playing recording:', recordingUrl);
+      playRecording(recordingUrl, recordingName);
+    });
+  });
+}
+
+
 // Play recording in a modal with waveform 
-function playRecording(url) {
+function playRecording(url, fileName) {
   console.log('Playing recording:', url);
 
   if (!url) {
@@ -463,8 +767,15 @@ function playRecording(url) {
     return;
   }
 
-  const fileName = url.split('/').pop().split('?')[0];
+  // Use provided fileName or extract from URL
+  if (!fileName) {
+    fileName = url.split('/').pop().split('?')[0];
+  }
 
+  // FIX 2: Create HTML5 Audio FIRST for instant playback (0.2-0.5s start)
+  const audio = new Audio(url);
+  audio.preload = 'metadata';
+  
   // Create modal
   const modal = document.createElement('div');
   modal.className = 'modal is-active recording-modal';
@@ -485,24 +796,26 @@ function playRecording(url) {
           <button class="button is-small is-light" id="speedBtn" title="Switch speed">1x</button>
         </div>
         <div style="position:absolute; bottom:10px; right:5px;" title="Download Recording">
-          <a id="downloadBtn"><i class="material-icons">file_download</i></a>
+          <a id="downloadBtn" href="${url}" download="${fileName.endsWith('.mp3') ? fileName : fileName + '.mp3'}"><i class="material-icons">file_download</i></a>
         </div>
       </section>
     </div>
   `;
   document.body.appendChild(modal);
 
-  // Load Wavesurfer dynamically if needed
-  if (!window.WaveSurfer) {
+  // FIX 6: WaveSurfer should already be loaded at page load
+  if (window.WaveSurfer) {
+    initPlayer();
+  } else {
+    // Fallback: load dynamically if not pre-loaded
     const script = document.createElement('script');
     script.src = "https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js";
     script.onload = () => initPlayer();
     document.head.appendChild(script);
-  } else {
-    initPlayer();
   }
 
   function initPlayer() {
+    // FIX 3: Use MediaElement backend with existing audio element
     const wavesurfer = WaveSurfer.create({
       container: '#waveform',
       waveColor: '#90caf9',
@@ -510,30 +823,16 @@ function playRecording(url) {
       cursorColor: '#ef5350',
       barWidth: 2,
       responsive: true,
-      backend: 'MediaElement', // HTML5 audio backend
+      backend: 'MediaElement',
+      media: audio, // Attach to existing audio element
       height: 60,
     });
-
-    // Load file
-    wavesurfer.load(url);
 
     const playBtn = document.getElementById('playBtn');
     const rewBtn = document.getElementById('rewBtn');
     const fwdBtn = document.getElementById('fwdBtn');
     const speedBtn = document.getElementById('speedBtn');
     const timeLbl = document.getElementById('timeLbl');
-    const downloadBtn = document.getElementById('downloadBtn');
-
-    // ✅ Fetch duration from backend (/meta) for long recordings
-    fetch(`${url}/meta`)
-      .then(r => r.json())
-      .then(data => {
-        if (typeof data.duration === 'number') {
-          const dur = data.duration;
-          timeLbl.textContent = `0:00 / ${fmt(dur)}`;
-        }
-      })
-      .catch(err => console.error('Meta fetch failed:', err));
 
     // Play/pause
     playBtn.onclick = () => {
@@ -567,24 +866,15 @@ function playRecording(url) {
       timeLbl.textContent = `0:00 / ${fmt(dur)}`;
     });
 
-    // Download link
-    fetch(url)
-      .then(r => r.blob())
-      .then(blob => {
-        const objUrl = URL.createObjectURL(blob);
-        downloadBtn.href = objUrl;
-        downloadBtn.download = fileName.endsWith('.mp3')
-          ? fileName
-          : fileName + '.mp3';
-      });
-
     // ✅ Closing modal (X, background, Esc)
     const closeModal = () => {
       wavesurfer.destroy();
+      audio.pause();
+      audio.src = '';
       document.body.removeChild(modal);
     };
-    modal.querySelector('.modal-background').onclick = closeModal; // click outside
-    modal.querySelector('.delete').onclick = closeModal;            // X button
+    modal.querySelector('.modal-background').onclick = closeModal;
+    modal.querySelector('.delete').onclick = closeModal;
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') closeModal();
     });
@@ -606,6 +896,14 @@ async function fetchData(params) {
     showError('Start and end dates are required');
     return;
   }
+
+  // Convert start/end to unix timestamps (seconds)
+  const fromTs = Math.floor(new Date(params.start).getTime() / 1000);
+  const toTs   = Math.floor(new Date(params.end).getTime() / 1000);
+
+  // Load Queue/Campaign dropdown dynamically
+  loadQueueCampaignDropdown(fromTs, toTs);
+  loadAgentDispositionDropdown(fromTs, toTs);
 
   try {
     // Reset state for new query
@@ -860,6 +1158,9 @@ function renderTable(data) {
   // Render initial batch of rows
   appendTableRows(tbody, initialRows, 0);
   
+  // FIX 4: Disabled - prefetching downloads full recordings which is slow
+  // prefetchRecordings(initialRows);
+  
   // Set up infinite scrolling
   if (data.length > initialBatchSize) {
     // Add a small loading indicator at the bottom that's always visible
@@ -912,6 +1213,40 @@ function renderTable(data) {
   }
 }
 
+// Background pre-fetch recordings to warm cache (runs silently)
+function prefetchRecordings(rows) {
+  // Get first 10 rows that have call_id and called_time
+  const rowsWithRecordings = rows
+    .filter(r => r.call_id && r.called_time && r.recording)
+    .slice(0, 10);
+  
+  if (rowsWithRecordings.length === 0) return;
+  
+  console.log(`🔄 Pre-fetching ${rowsWithRecordings.length} recordings in background...`);
+  
+  // Fetch one at a time to avoid overwhelming the server
+  let index = 0;
+  const fetchNext = () => {
+    if (index >= rowsWithRecordings.length) {
+      console.log('✅ Background pre-fetch complete');
+      return;
+    }
+    
+    const row = rowsWithRecordings[index];
+    fetchRecordingsByCallId(row.call_id, row.called_time)
+      .then(() => console.log(`⚡ Pre-cached: ${row.call_id}`))
+      .catch(() => {}) // Silently ignore errors
+      .finally(() => {
+        index++;
+        // Delay 500ms between requests to not overwhelm server
+        setTimeout(fetchNext, 500);
+      });
+  };
+  
+  // Start pre-fetching after 2 second delay (let page load first)
+  setTimeout(fetchNext, 2000);
+}
+
 // Helper function to append rows to the table body
 function appendTableRows(tbody, rows, startIndex = 0) {
   // Create a document fragment to batch DOM operations
@@ -944,9 +1279,11 @@ function appendTableRows(tbody, rows, startIndex = 0) {
       { value: (row.wait_duration_formatted && row.wait_duration_formatted !== 'undefined') ? row.wait_duration_formatted : (row.wait_duration === null ? '' : row.wait_duration), isHTML: false },
       { value: (row.talk_duration_formatted && row.talk_duration_formatted !== 'undefined') ? row.talk_duration_formatted : (row.talk_duration === null ? '' : row.talk_duration), isHTML: false },
       { value: (row.hold_duration_formatted && row.hold_duration_formatted !== 'undefined') ? row.hold_duration_formatted : (row.hold_duration === null ? '' : row.hold_duration), isHTML: false },
+      { value: row.hold_duration_intervals ? row.hold_duration_intervals.replace(/\n/g, '<br>') : '', isHTML: true },
       { value: row.agent_disposition || '', isHTML: false },
       { value: row.sub_disp_1 || '', isHTML: false },
       { value: row.sub_disp_2 || '', isHTML: false },
+      { value: row.sub_disp_3 || '', isHTML: false },
       { value: row.follow_up_notes || '', isHTML: false },  // Plain text field
       { value: row.agent_hangup || '', isHTML: false },
       { value: row.status || '', isHTML: false },
@@ -954,15 +1291,15 @@ function appendTableRows(tbody, rows, startIndex = 0) {
       { value: row.abandoned || '', isHTML: false },
       { value: row.country || '', isHTML: false },
       { value: row.transfer_event === 1 || row.transfer_event === true ? 'Yes' : 'No', isHTML: false },  // Transfer column
-      { value: row.transfer_extension || '', isHTML: false },  // Transfer to agent extension column
-      { value: row.transfer_queue_extension || '', isHTML: false },  // Transfer to queue extension column
+      { value: row.transfer_extension || '', isHTML: false },  // Transfer to column
       { value: row.transfer_type || '', isHTML: false },  // Transfer type column
       { value: processHistoryData(row.agent_history, 'agent'), isHTML: true },  // HTML content with eye button
-      { value: processHistoryData(row.queue_history, 'queue'), isHTML: true },   // HTML content with eye button
-      { value: row.recording ? createRecordingLink(row.recording) : '', isHTML: false, isElement: true },  // Recording button element
+      { value: processHistoryData(row.record_type === 'Campaign' ? (row.lead_history || row.queue_history) : row.queue_history, 'queue'), isHTML: true },   // HTML content with eye button - use lead_history for campaigns
+      { value: row.recording ? createRecordingLink(row.recording) : '', isHTML: false, isElement: true },  // Recording button - plays single recording directly
+      { value: (row.call_id && row.called_time) ? createAllRecordingsButton(row.call_id, row.called_time) : '', isHTML: false, isElement: true },  // All Recordings button - fetches all via API
       { value: row.call_id || '', isHTML: false },
       { value: row.csat || '', isHTML: false },
-      { value: row.system_disposition || row.disposition || '', isHTML: false },
+      { value: row.system_disposition || row.disposition || '', isHTML: false },  // System Disposition column
     ];
     
     // Add each cell to the row
@@ -1250,15 +1587,22 @@ function getHistoryTextForCSV(row, type) {
       return queueHistoryToText(row.lead_history_array);
     }
     
-    // Try alternative field names
+    // Try alternative field names for campaigns
     if (type === 'agent' && row.agent_history && Array.isArray(row.agent_history)) {
       console.log('DEBUG: Found agent_history array for campaign');
       return agentHistoryToText(row.agent_history);
     }
     
+    // For campaigns, queue history is stored in lead_history field
     if (type === 'queue' && row.lead_history && Array.isArray(row.lead_history)) {
       console.log('DEBUG: Found lead_history array for campaign');
       return queueHistoryToText(row.lead_history);
+    }
+    
+    // Also check if queue_history exists for campaigns (fallback)
+    if (type === 'queue' && row.queue_history && Array.isArray(row.queue_history)) {
+      console.log('DEBUG: Found queue_history array for campaign');
+      return queueHistoryToText(row.queue_history);
     }
   }
   
@@ -1280,8 +1624,16 @@ function getHistoryTextForCSV(row, type) {
   }
   
   // Second, try to extract from HTML content
-  const htmlField = type === 'agent' ? 'agent_history' : 'queue_history';
-  const htmlContent = row[htmlField];
+  // For campaigns, queue history might be in lead_history field
+  let htmlField = type === 'agent' ? 'agent_history' : 'queue_history';
+  let htmlContent = row[htmlField];
+  
+  // For campaigns, if queue_history is empty, try lead_history
+  if (type === 'queue' && row.record_type === 'Campaign' && (!htmlContent || htmlContent === '')) {
+    htmlField = 'lead_history';
+    htmlContent = row[htmlField];
+    console.log('DEBUG: Using lead_history for campaign queue history');
+  }
   
   console.log(`DEBUG: HTML field ${htmlField} content length:`, htmlContent ? htmlContent.length : 0);
   console.log(`DEBUG: HTML content preview:`, htmlContent ? htmlContent.substring(0, 100) + '...' : 'empty');
@@ -1604,6 +1956,7 @@ function showHistoryModal(button) {
 // Add showHistoryModal to window object so it can be called from inline event handlers
 window.showHistoryModal = showHistoryModal;
 
+
 // Function to initialize eye buttons within a container (legacy support)
 function initializeEyeButtons(container) {
   // This is now handled by the onclick attribute directly
@@ -1619,15 +1972,86 @@ function initializeEyeButtons(container) {
     }
   });
   
-  // Initialize play buttons
+  // Initialize play buttons - plays single recording directly (instant)
   const playButtons = container.querySelectorAll('.play-btn');
   playButtons.forEach(btn => {
     if (!btn.hasAttribute('data-initialized')) {
       btn.setAttribute('data-initialized', 'true');
       btn.addEventListener('click', function(e) {
         e.preventDefault();
-        console.log('Play button clicked, src:', this.dataset.src);
-        playRecording(this.dataset.src);
+        if (this.dataset.src) {
+          console.log('Playing single recording:', this.dataset.src);
+          playRecording(this.dataset.src);
+        } else {
+          alert('No recording available');
+        }
+      });
+    }
+  });
+
+  // Initialize "All Recordings" buttons - fetches all recordings via API
+  const allRecordingsButtons = container.querySelectorAll('.all-recordings-btn');
+  allRecordingsButtons.forEach(btn => {
+    if (!btn.hasAttribute('data-initialized')) {
+      btn.setAttribute('data-initialized', 'true');
+      btn.addEventListener('click', async function(e) {
+        e.preventDefault();
+        
+        const callId = this.dataset.callId;
+        const calledTime = this.dataset.calledTime;
+        
+        if (!callId || !calledTime) {
+          alert('Missing call information');
+          return;
+        }
+        
+        console.log('Fetching all recordings for call_id:', callId);
+        
+        // Create blocking overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'loading-overlay';
+        overlay.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.7);
+          z-index: 9999;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          cursor: wait;
+        `;
+        overlay.innerHTML = `
+          <div class="loader is-loading" style="width: 50px; height: 50px; border-width: 4px;"></div>
+          <p style="color: white; margin-top: 20px; font-size: 18px;">Loading all recordings...</p>
+        `;
+        document.body.appendChild(overlay);
+        
+        try {
+          this.disabled = true;
+          this.innerHTML = '<span class="icon is-small"><i class="material-icons">hourglass_empty</i></span>';
+          
+          const response = await fetchRecordingsByCallId(callId, calledTime);
+          
+          overlay.remove();
+          this.disabled = false;
+          this.innerHTML = '<span class="icon is-small"><i class="material-icons">library_music</i></span>';
+          
+          if (response && response.recordings && response.recordings.length > 0) {
+            showRecordingsModal(response.recordings);
+          } else {
+            alert('No recordings found for this call');
+          }
+        } catch (error) {
+          overlay.remove();
+          this.disabled = false;
+          this.innerHTML = '<span class="icon is-small"><i class="material-icons">library_music</i></span>';
+          console.error('Error fetching recordings:', error);
+          alert('Error fetching recordings: ' + error.message);
+        }
       });
     }
   });
@@ -1660,9 +2084,11 @@ function generateCSV() {
     'Wait Duration ',
     'Talk Duration ',
     'Hold Duration ',
+    'Hold Duration Intervals',
     'Agent Disposition',
     'Sub Disp 1',
     'Sub Disp 2',
+    'Sub Disp 3',
     'Follow-up Notes',
     'Agent Hangup',
     'Status',
@@ -1670,15 +2096,14 @@ function generateCSV() {
     'Abandoned',
     'Country',
     'Transfer',
-    'Transfer To Agent Extension',
-    'Transfer To Queue Extension',
+    'Transfer To Extension',
     'Transfer Type',
     'Agent History',
     'Queue History',
     'Recording',
     'Call ID',
     'CSAT',
-    'System Disposition',
+    'System Disposition'
   ];
   
   // Use Blob for better memory efficiency with large datasets
@@ -1723,9 +2148,11 @@ function generateCSV() {
         `"${(row.wait_duration_formatted && row.wait_duration_formatted !== 'undefined') ? row.wait_duration_formatted : formatDuration(row.wait_duration)}"`,
         `"${(row.talk_duration_formatted && row.talk_duration_formatted !== 'undefined') ? row.talk_duration_formatted : formatDuration(row.talk_duration)}"`,
         `"${(row.hold_duration_formatted && row.hold_duration_formatted !== 'undefined') ? row.hold_duration_formatted : formatDuration(row.hold_duration)}"`,
+        `"${(row.hold_duration_intervals || '').replace(/"/g, '""')}"`,
         `"${(row.agent_disposition || '').replace(/"/g, '""')}"`,
         `"${(row.sub_disp_1 || '').replace(/"/g, '""')}"`,
         `"${(row.sub_disp_2 || '').replace(/"/g, '""')}"`,
+        `"${(row.sub_disp_3 || '').replace(/"/g, '""')}"`,
         `"${(row.follow_up_notes || '').replace(/"/g, '""')}"`,
         `"${(row.agent_hangup || '').replace(/"/g, '""')}"`,
         `"${(row.status || '').replace(/"/g, '""')}"`,
@@ -1734,7 +2161,6 @@ function generateCSV() {
         `"${(row.country || '').replace(/"/g, '""')}"`,
         `"${(row.transfer_event === 1 || row.transfer_event === true ? 'Yes' : 'No') || ''}"`,
         `"${(row.transfer_extension || '').replace(/"/g, '""')}"`,
-        `"${(row.transfer_queue_extension || '').replace(/"/g, '""')}"`,
         `"${(row.transfer_type || '').replace(/"/g, '""')}"`,
         `"${getHistoryTextForCSV(row, 'agent').replace(/"/g, '""')}"`,
         `"${getHistoryTextForCSV(row, 'queue').replace(/"/g, '""')}"`,
@@ -1860,6 +2286,7 @@ function resetForm() {
   document.getElementById('agent_disposition').value = '';
   document.getElementById('sub_disp_1').value = '';
   document.getElementById('sub_disp_2').value = '';
+  document.getElementById('sub_disp_3').value = '';
   document.getElementById('status').value = '';
   document.getElementById('campaign_type').value = '';
   document.getElementById('country').value = '';
@@ -1887,7 +2314,20 @@ function processHistoryData(historyData, type) {
     try {
       const parsed = JSON.parse(historyData);
       if (Array.isArray(parsed)) {
-        return type === 'agent' ? historyToHtml(parsed) : queueHistoryToHtml(parsed);
+        // Detect data structure to choose appropriate function
+        if (type === 'agent') {
+          return historyToHtml(parsed);
+        } else {
+          // For queue history, check if it has agent history structure (Campaign calls)
+          // or queue history structure (Inbound/Outbound calls)
+          if (parsed.length > 0 && parsed[0].hasOwnProperty('last_attempt')) {
+            // This is agent history data structure (Campaign calls)
+            return historyToHtml(parsed);
+          } else {
+            // This is queue history data structure (Inbound/Outbound calls)
+            return queueHistoryToHtml(parsed);
+          }
+        }
       }
       return historyData; // Not an array, return as is
     } catch (e) {
@@ -1897,7 +2337,18 @@ function processHistoryData(historyData, type) {
   
   // If it's already an array
   if (Array.isArray(historyData)) {
-    return type === 'agent' ? historyToHtml(historyData) : queueHistoryToHtml(historyData);
+    if (type === 'agent') {
+      return historyToHtml(historyData);
+    } else {
+      // For queue history, check data structure
+      if (historyData.length > 0 && historyData[0].hasOwnProperty('last_attempt')) {
+        // This is agent history data structure (Campaign calls)
+        return historyToHtml(historyData);
+      } else {
+        // This is queue history data structure (Inbound/Outbound calls)
+        return queueHistoryToHtml(historyData);
+      }
+    }
   }
   
   return historyData;
@@ -1938,6 +2389,46 @@ function addFilterChangeListeners() {
   });
 }
 
+// Add date change listeners to automatically fetch filter dropdowns
+function addDateChangeListeners() {
+  let debounceTimer;
+  
+  const fetchFiltersForDateRange = () => {
+    // Clear any existing debounce timer
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    
+    // Debounce to avoid excessive API calls while user is typing
+    debounceTimer = setTimeout(() => {
+      const startDate = elements.startInput.value;
+      const endDate = elements.endInput.value;
+      
+      // Only fetch if both dates are provided
+      if (startDate && endDate) {
+        // Convert to unix timestamps (seconds)
+        const fromTs = Math.floor(new Date(startDate).getTime() / 1000);
+        const toTs = Math.floor(new Date(endDate).getTime() / 1000);
+        
+        // Validate that dates are valid
+        if (!isNaN(fromTs) && !isNaN(toTs) && fromTs > 0 && toTs > 0) {
+          console.log('Date range changed, fetching filter dropdowns...');
+          loadQueueCampaignDropdown(fromTs, toTs);
+          loadAgentDispositionDropdown(fromTs, toTs);
+        }
+      }
+    }, 500); // Wait 500ms after user stops typing
+  };
+  
+  // Add event listeners to both date inputs
+  elements.startInput.addEventListener('change', fetchFiltersForDateRange);
+  elements.endInput.addEventListener('change', fetchFiltersForDateRange);
+  
+  // Also trigger on input event for more responsive updates
+  elements.startInput.addEventListener('input', fetchFiltersForDateRange);
+  elements.endInput.addEventListener('input', fetchFiltersForDateRange);
+}
+
 // Initialize the page
 function init() {
   // Set up date inputs
@@ -1949,6 +2440,21 @@ function init() {
   
   // Add filter change listeners
   addFilterChangeListeners();
+  
+  // Add date change listeners to automatically fetch filter dropdowns
+  addDateChangeListeners();
+  
+  // Fetch filter dropdowns for the default date range on page load
+  if (elements.startInput.value && elements.endInput.value) {
+    const fromTs = Math.floor(new Date(elements.startInput.value).getTime() / 1000);
+    const toTs = Math.floor(new Date(elements.endInput.value).getTime() / 1000);
+    
+    if (!isNaN(fromTs) && !isNaN(toTs) && fromTs > 0 && toTs > 0) {
+      console.log('Loading filter dropdowns for default date range...');
+      loadQueueCampaignDropdown(fromTs, toTs);
+      loadAgentDispositionDropdown(fromTs, toTs);
+    }
+  }
   
   // Apply filter-active class to any inputs that already have values
   updateFilterActiveClass();
@@ -1963,6 +2469,15 @@ function init() {
     script.onload = () => console.log('Howler loaded successfully');
     script.onerror = () => console.error('Failed to load Howler.js');
     document.head.appendChild(script);
+  }
+  
+  // FIX 6: Load WaveSurfer once at page load (saves 300-500ms on first play)
+  if (!window.WaveSurfer) {
+    const wsScript = document.createElement('script');
+    wsScript.src = 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js';
+    wsScript.onload = () => console.log('WaveSurfer loaded successfully');
+    wsScript.onerror = () => console.error('Failed to load WaveSurfer');
+    document.head.appendChild(wsScript);
   }
 }
 

@@ -201,12 +201,18 @@ async function insertBatch(batch) {
         record['Sub_disp_2'] = record['Sub_disp_2'].name || JSON.stringify(record['Sub_disp_2']);
       }
       
+      if (record['Sub_disp_3'] && typeof record['Sub_disp_3'] === 'object') {
+        console.warn(`⚠️ Record ${index}: Sub_disp_3 is object:`, JSON.stringify(record['Sub_disp_3']));
+        record['Sub_disp_3'] = record['Sub_disp_3'].name || JSON.stringify(record['Sub_disp_3']);
+      }
+      
       // Validate field lengths to prevent truncation
       const maxLengths = {
         'Agent Disposition': 100,
         'Disposition': 200,
         'Sub_disp_1': 200,
-        'Sub_disp_2': 200
+        'Sub_disp_2': 200,
+        'Sub_disp_3': 200
       };
       
       
@@ -265,6 +271,7 @@ async function insertBatch(batch) {
       record['Disposition'] || record['System Disposition'] || null,
       record['Sub_disp_1'] || record['Sub Disp 1'] || null,
       record['Sub_disp_2'] || record['Sub Disp 2'] || null,
+      record['Sub_disp_3'] || record['Sub Disp 3'] || null,
       record.Status || null,
       record['Campaign Type'] || null,
       record.Abandoned || null,
@@ -289,7 +296,7 @@ async function insertBatch(batch) {
     'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
     'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
     'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
-    'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2',
+    'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
     'status', 'campaign_type', 'abandoned', 'country', 'follow_up_notes',
     'agent_history', 'queue_history', 'lead_history', 'recording',
     'transfer_event', 'transfer_extension', 'transfer_queue_extension', 'transfer_type', 'csat'
@@ -311,7 +318,7 @@ async function insertBatch(batch) {
       call_id, record_type, type, agent_name, extension, queue_campaign_name, 
       called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number,
       answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
-      agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2,
+      agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3,
       status, campaign_type, abandoned, country, follow_up_notes,
       agent_history, queue_history, lead_history, recording,
       transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat
@@ -340,11 +347,11 @@ async function insertBatch(batch) {
             call_id, record_type, type, agent_name, extension, queue_campaign_name, 
             called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number,
             answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
-            agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2,
+            agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3,
             status, campaign_type, abandoned, country, follow_up_notes,
             agent_history, queue_history, lead_history, recording,
             transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         await dbService.query(singleRecordSql, values[i]);
@@ -380,7 +387,7 @@ export async function queryFinalReport(params = {}) {
     const { 
       startDate, endDate, 
       caller_id_number, callee_id_number, agent_name, queue_campaign_name,
-      record_type, disposition, sub_disp_1, sub_disp_2, status, campaign_type, country,
+      record_type, disposition, sub_disp_1, sub_disp_2, sub_disp_3, status, campaign_type, country,
       limit = 10000, offset = 0, sort_by = 'called_time', sort_order = 'desc'
     } = params;
     
@@ -504,6 +511,11 @@ export async function queryFinalReport(params = {}) {
       values.push(`%${sub_disp_2}%`);
     }
     
+    if (sub_disp_3) {
+      conditions.push('sub_disp_3 = ?');
+      values.push(sub_disp_3);
+    }
+    
     if (status) {
       conditions.push('status LIKE ?');
       values.push(`%${status}%`);
@@ -557,7 +569,7 @@ export async function queryFinalReport(params = {}) {
       'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
       'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
       'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
-      'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2',
+      'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
       'status', 'campaign_type', 'abandoned', 'country', 'created_at', 'updated_at'
     ];
     
