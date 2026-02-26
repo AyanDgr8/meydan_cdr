@@ -4,6 +4,30 @@
 
 import dbService from './dbService.js';
 import { createUnifiedReportFromDB, processRecordData } from './reportFetcher.js';
+import { sendCSATEmail } from './mail.js';
+
+// Track call IDs for which CSAT emails have already been sent (persists across populate cycles)
+const csatEmailSentIds = new Set();
+let csatIdsLoaded = false;
+
+/**
+ * Load existing CSAT call IDs from the database so we don't re-send emails on server restart
+ */
+async function loadExistingCSATIds() {
+  if (csatIdsLoaded) return;
+  try {
+    const rows = await dbService.query(
+      "SELECT call_id FROM final_report WHERE csat IS NOT NULL AND csat != ''"
+    );
+    if (Array.isArray(rows)) {
+      rows.forEach(r => { if (r.call_id) csatEmailSentIds.add(r.call_id); });
+    }
+    csatIdsLoaded = true;
+    console.log(`📧 Loaded ${csatEmailSentIds.size} existing CSAT call IDs (emails will not be re-sent for these)`);
+  } catch (err) {
+    console.error('❌ Failed to load existing CSAT IDs:', err.message);
+  }
+}
 
 /**
  * Format timestamp to local time string
@@ -152,6 +176,33 @@ async function insertIntoFinalReport(records) {
     // Continue with insertion of all records if checking fails
   }
   
+  // Load existing CSAT call IDs from DB on first run (prevents re-sending after restart)
+  await loadExistingCSATIds();
+
+  // Send CSAT email notifications only for records we haven't emailed yet
+  for (const record of newRecords) {
+    const csat = record.CSAT || null;
+    const callId = record.call_id || record.callid || '';
+    if (csat && callId && !csatEmailSentIds.has(callId)) {
+      csatEmailSentIds.add(callId);
+      let agentName = record['Agent name'] || record.agent_name || '';
+      if (!agentName && Array.isArray(record.agent_history)) {
+        const agentEvt = record.agent_history.find(e => e && (e.event === 'agent_answer' || e.event === 'agent_enter'));
+        if (agentEvt) {
+          agentName = `${agentEvt.first_name ?? ''} ${agentEvt.last_name ?? ''}`.trim();
+        }
+      }
+      sendCSATEmail({
+        agentName,
+        extension: record.Extension || record.extension || '',
+        callerIdNumber: record['Caller ID Number'] || record.caller_id_number || '',
+        calleeIdNumber: record['Callee ID / Lead number'] || record.callee_id_number || '',
+        csat,
+        callId,
+      }).catch(() => {});
+    }
+  }
+
   // Insert records in batches
   const BATCH_SIZE = 100;
   let insertedCount = 0;

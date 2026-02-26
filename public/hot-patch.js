@@ -265,6 +265,46 @@ function calculateSummary(data, filterTerm = null) {
   return summary;
 }
 
+// Render "Agents Not Available" column HTML from skill_agents_not_available data
+function renderAgentsNotAvailable(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) return '<span style="color:#999;">--</span>';
+  // SUB_LOB color map: BDA = light pink-blue, BSA = light yellow, MFZ = light lavender
+  const subLobColors = {
+    BDA: { bg: '#e3f2fd', border: '#3d8bffff' },
+    BSA: { bg: '#fff4baff', border: '#ffae00fd' },
+    MFZ: { bg: '#ffd0aeff', border: '#ff6600fd' }
+  };
+  const defaultColor = { bg: '#f5f5f5', border: '#bdbdbd' };
+  return groups.map(g => {
+    const colors = subLobColors[g.subLob] || defaultColor;
+    const fontColor = g.isAnsweredGroup ? 'color:#2e7d32; font-weight:bold;' : '';
+    const dialedLabels = g.dialedLabels || g.dialed || [];
+    const skippedLabels = g.skippedLabels || g.skipped || [];
+    const allLabels = [...dialedLabels, ...skippedLabels];
+    const labelsStr = allLabels.length > 0 ? allLabels.join(', ') : '--';
+    return `<div style="background:${colors.bg}; border-left:3px solid ${colors.border}; padding:2px 6px; margin:2px 0; border-radius:3px; text-align:left; ${fontColor}">` +
+      `<strong>${g.subLob}</strong> => ${labelsStr}</div>`;
+  }).join('');
+}
+
+// Render "Attempts" column HTML from skill_attempts data
+function renderAttempts(attempts) {
+  if (!Array.isArray(attempts) || attempts.length === 0) return '<span style="color:#999;">--</span>';
+  return attempts.map(a => {
+    const color = a.isAnswered ? '#2e7d32' : '#c62828';
+    const bg = a.isAnswered ? '#c8e6c9' : '#ffcdd2';
+    const display = a.label || a.ext;
+    const groupPrefix = a.subLob ? `${a.subLob} => ` : '';
+    return `<span style="display:inline-block; padding:2px 6px; margin:2px; border-radius:3px; background:${bg}; color:${color}; font-weight:bold;">${groupPrefix}${display}</span>`;
+  }).join(' ');
+}
+
+// Render "Agent Answered" column HTML
+function renderAgentAnswered(ext) {
+  if (!ext || ext === '--') return '<span style="color:#999; font-weight:bold;">--</span>';
+  return `<span style="display:inline-block; padding:2px 8px; border-radius:3px; background:#c8e6c9; color:#2e7d32; font-weight:bold;">${ext}</span>`;
+}
+
 function displayBLAResults(data, summary) {
   if (!data || data.length === 0) {
     elements.resultsSection.classList.remove('is-hidden');
@@ -306,7 +346,10 @@ function displayBLAResults(data, summary) {
     'Transferred Call Agent History',
     'Transferred Call',
     'Failed Attempts',
-    'Failed Agents'
+    'Failed Agents',
+    'Agents Not Available',
+    'Attempts',
+    'Agent Answered'
   ];
   
   // Build table HTML with no-wrap styling for headers
@@ -355,6 +398,9 @@ function displayBLAResults(data, summary) {
       <td style="background-color: ${transferStatusBg}; color: ${transferStatusColor}; font-weight: bold; text-align: center;">${transferStatus}</td>
       <td style="background-color: #fff3e0; color: #d32f2f; font-weight: bold;">${record.failed_transfer_count || 0}</td>
       <td style="background-color: #fff3e0; font-size: 0.9em;" title="${record.failed_agents_list || 'No failed attempts'}">${record.failed_agents_list || '-'}</td>
+      <td style="background-color: #f3e5f5; min-width: 200px; font-size: 0.85em;">${renderAgentsNotAvailable(record.skill_agents_not_available)}</td>
+      <td style="background-color: #f3e5f5; min-width: 150px;">${renderAttempts(record.skill_attempts)}</td>
+      <td style="background-color: #f3e5f5; text-align: center;">${renderAgentAnswered(record.skill_agent_answered)}</td>
     </tr>`;
   });
   
@@ -884,7 +930,10 @@ function generateBLACSV() {
     'Transferred Call Agent History',
     'Transferred Call',
     'Failed Attempts',
-    'Failed Agents'
+    'Failed Agents',
+    'Agents Not Available',
+    'Attempts',
+    'Agent Answered'
   ];
   
   // Create CSV content
@@ -926,7 +975,10 @@ function generateBLACSV() {
       `"${inbound_agent_history_text.replace(/"/g, '""')}"`,
       `"${transferStatus}"`,
       `"${(record.failed_transfer_count || 0)}"`,
-      `"${(record.failed_agents_list || '').replace(/"/g, '""')}"`
+      `"${(record.failed_agents_list || '').replace(/"/g, '""')}"`,
+      `"${(Array.isArray(record.skill_agents_not_available) ? record.skill_agents_not_available.map(g => g.subLob + ' => ' + [...(g.dialedLabels || g.dialed || []), ...(g.skippedLabels || g.skipped || [])].join('; ')).join(' | ') : '').replace(/"/g, '""')}"`,
+      `"${(Array.isArray(record.skill_attempts) ? record.skill_attempts.map(a => (a.subLob ? a.subLob + ' => ' : '') + (a.label || a.ext) + (a.isAnswered ? '(answered)' : '(failed)')).join('; ') : '').replace(/"/g, '""')}"`,
+      `"${(record.skill_agent_answered || '--').replace(/"/g, '""')}"`
     ].join(',');
     
     csvRows.push(csvRow);

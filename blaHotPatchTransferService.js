@@ -5,6 +5,8 @@
 import mysql from 'mysql2/promise';
 import { DateTime } from 'luxon';
 import dbService from './dbService.js';
+import axios from 'axios';
+import https from 'https';
 import { 
   isQueueExtension, 
   processCampaignTransfersToQueueExtensions,
@@ -39,6 +41,166 @@ const queueToCalleeExtensionMap = {
   '8019': '7008',
   '8021': '7060'  // Test_hotpatch queue 
 };
+
+const SKILL_HISTORY_URL = 'https://ira-meydan-du.ucprem.voicemeetme.com/tmp/queue-skill-history.json';
+const skillHistoryHttpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+/**
+ * Fetch queue-skill-history.json from the remote server
+ * @returns {Object} - Full JSON keyed by call_id
+ */
+async function fetchQueueSkillHistory() {
+  try {
+    console.log(`📋 SKILL HISTORY: Fetching from ${SKILL_HISTORY_URL}`);
+    const { data } = await axios.get(SKILL_HISTORY_URL, {
+      timeout: 15000,
+      httpsAgent: skillHistoryHttpsAgent,
+      headers: { Accept: 'application/json' }
+    });
+    if (!data || typeof data !== 'object') {
+      console.warn('⚠️ SKILL HISTORY: Unexpected response format');
+      return {};
+    }
+
+    // The JSON structure is: { queues: [ { queue_name, skill_group_history: { dial_history: { call_id: [...entries] } } } ] }
+    // Flatten dial_history from ALL queues into a single call_id-keyed map
+    const flatMap = {};
+    const queues = Array.isArray(data.queues) ? data.queues : [];
+    console.log(`📋 SKILL HISTORY: Found ${queues.length} queues in response`);
+
+    for (const queue of queues) {
+      const dialHistory = queue?.skill_group_history?.dial_history;
+      if (!dialHistory || typeof dialHistory !== 'object') continue;
+      const callIds = Object.keys(dialHistory);
+      if (callIds.length === 0) continue;
+      console.log(`📋 SKILL HISTORY: Queue "${queue.queue_name}" has ${callIds.length} call IDs in dial_history`);
+      for (const callId of callIds) {
+        if (flatMap[callId]) {
+          // Merge entries from multiple queues for the same call_id
+          flatMap[callId] = flatMap[callId].concat(dialHistory[callId]);
+        } else {
+          flatMap[callId] = dialHistory[callId];
+        }
+      }
+    }
+
+    const totalCallIds = Object.keys(flatMap).length;
+    console.log(`✅ SKILL HISTORY: Extracted ${totalCallIds} unique call IDs from all queues`);
+    return flatMap;
+  } catch (err) {
+    console.error(`❌ SKILL HISTORY: Failed to fetch - ${err.message}`);
+    return {};
+  }
+}
+
+/**
+ * Extract SUB_LOB name from skills array (e.g. ["Languages.English","SUB_LOB.BDA"] -> "BDA")
+ */
+function extractSubLob(skills) {
+  if (!Array.isArray(skills)) return null;
+  for (const skill of skills) {
+    if (typeof skill === 'string' && skill.startsWith('SUB_LOB.')) {
+      return skill.replace('SUB_LOB.', '');
+    }
+  }
+  return null;
+}
+
+/**
+ * Process skill history entries for a single call_id.
+ * Returns structured data for the 3 new columns:
+ *   - skill_agents_not_available: SUB_LOB groups with dialed + skipped agent extensions, ordered by appearance
+ *   - skill_attempts: All dialed agents (with agent_ext != null), green if answered, red if failed
+ *   - skill_agent_answered: The extension that answered, or "--"
+ */
+function processSkillHistoryForCall(entries, extToNameMap = {}) {
+  // Helper: format ext as "AgentName (ext)" or just "ext" if no name found
+  const fmtExt = (ext) => {
+    const name = extToNameMap[ext];
+    return name ? `${name} (${ext})` : ext;
+  };
+
+  const empty = {
+    skill_agents_not_available: [],
+    skill_attempts: [],
+    skill_agent_answered: '--'
+  };
+  if (!Array.isArray(entries) || entries.length === 0) return empty;
+
+  // Sort by timestamp to preserve order
+  const sorted = [...entries].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+  // Find answered agent
+  const answeredEntry = sorted.find(e => e.dial_status === 'answered' && e.agent_ext);
+  const answeredExt = answeredEntry ? String(answeredEntry.agent_ext) : null;
+  const answeredSubLob = answeredEntry ? extractSubLob(answeredEntry.skills) : null;
+
+  // Build SUB_LOB groups in order of first appearance
+  const subLobOrder = [];
+  const subLobGroups = {}; // SUB_LOB -> { dialed: [], skipped: [] }
+
+  for (const entry of sorted) {
+    const subLob = extractSubLob(entry.skills);
+    if (!subLob) continue;
+
+    if (!subLobGroups[subLob]) {
+      subLobGroups[subLob] = { dialed: [], skipped: [] };
+      subLobOrder.push(subLob);
+    }
+
+    // Dialed agents (agent_ext is not null, not group_exhausted)
+    if (entry.agent_ext) {
+      const ext = String(entry.agent_ext);
+      if (!subLobGroups[subLob].dialed.includes(ext)) {
+        subLobGroups[subLob].dialed.push(ext);
+      }
+    }
+
+    // Skipped agents from group_exhausted entries
+    if (entry.dial_status === 'group_exhausted' && Array.isArray(entry.agents_skipped)) {
+      for (const skipped of entry.agents_skipped) {
+        if (skipped.ext) {
+          const ext = String(skipped.ext);
+          if (!subLobGroups[subLob].skipped.includes(ext)) {
+            subLobGroups[subLob].skipped.push(ext);
+          }
+        }
+      }
+    }
+  }
+
+  // Build agents_not_available structured data with formatted labels
+  // Exclude the answered agent — they are NOT "not available"
+  const agentsNotAvailable = subLobOrder.map(subLob => {
+    const dialed = subLobGroups[subLob].dialed.filter(ext => ext !== answeredExt);
+    const skipped = subLobGroups[subLob].skipped.filter(ext => ext !== answeredExt);
+    return {
+      subLob,
+      dialed,
+      skipped,
+      dialedLabels: dialed.map(fmtExt),
+      skippedLabels: skipped.map(fmtExt),
+      isAnsweredGroup: false
+    };
+  }).filter(g => g.dialed.length > 0 || g.skipped.length > 0);
+
+  // Build attempts list (only dialed agents, exclude group_exhausted with null agent_ext)
+  const attempts = [];
+  for (const entry of sorted) {
+    if (!entry.agent_ext) continue;
+    const ext = String(entry.agent_ext);
+    const subLob = extractSubLob(entry.skills) || '';
+    if (!attempts.find(a => a.ext === ext)) {
+      attempts.push({ ext, label: fmtExt(ext), subLob, isAnswered: entry.dial_status === 'answered' });
+    }
+  }
+
+  return {
+    skill_agents_not_available: agentsNotAvailable,
+    skill_attempts: attempts,
+    skill_agent_answered: answeredExt ? (answeredSubLob ? `${answeredSubLob} => ${fmtExt(answeredExt)}` : fmtExt(answeredExt)) : '--'
+  };
+}
 
 /**
  * Format agent history with UTC timezone for BLA reports
@@ -1586,7 +1748,7 @@ export function linkCampaignToInboundCalls(campaignCalls, inboundCalls, usedInbo
       }
     }
     
-    // Fallback 1: For outbound calls, customer_number field (from $.to) has the customer's phone
+    // Fallback 1: For outbound calls, customer_number field has the customer's phone
     if (!campaignLeadNumber && campaignCall.customer_number) {
       const normalized = campaignCall.customer_number.toString().replace(/[^\d]/g, '');
       if (normalized.length >= 9) {
@@ -1594,7 +1756,15 @@ export function linkCampaignToInboundCalls(campaignCalls, inboundCalls, usedInbo
       }
     }
     
-    // Fallback 2: For campaign calls, caller_id_number contains the lead's phone number
+    // Fallback 2: For outbound calls, 'to' field has the customer's phone number
+    if (!campaignLeadNumber && campaignCall.to) {
+      const normalized = campaignCall.to.toString().replace(/[^\d]/g, '');
+      if (normalized.length >= 9) {
+        campaignLeadNumber = campaignCall.to;
+      }
+    }
+    
+    // Fallback 3: For campaign calls, caller_id_number contains the lead's phone number
     // Only use if it looks like a phone number (9+ digits) not an extension (4 digits)
     if (!campaignLeadNumber && campaignCall.caller_id_number) {
       const normalized = campaignCall.caller_id_number.toString().replace(/[^\d]/g, '');
@@ -1801,6 +1971,30 @@ export function linkCampaignToInboundCalls(campaignCalls, inboundCalls, usedInbo
       // Log the pattern detected
       if (pattern2ndLeg.isSuccessfulHotpatch) {
         console.log(`✅ BLA SUCCESSFUL HOTPATCH 2ND LEG: Inbound call ${inboundCall.call_id} has pattern: agent_enter → attended:transfer → transfer_enter to ${pattern2ndLeg.customerNumber}`);
+        
+        // For successful hotpatch, verify the transfer_enter customer matches the outbound's customer
+        if (normalizedCampaignLead && pattern2ndLeg.customerNumber) {
+          const normalizedHotpatchCustomer = normalizePhone(pattern2ndLeg.customerNumber);
+          let isHotpatchCustomerMatch = false;
+          
+          if (normalizedHotpatchCustomer === normalizedCampaignLead) {
+            isHotpatchCustomerMatch = true;
+          } else {
+            // Allow country code prefix difference
+            const longer = normalizedCampaignLead.length >= normalizedHotpatchCustomer.length ? normalizedCampaignLead : normalizedHotpatchCustomer;
+            const shorter = normalizedCampaignLead.length >= normalizedHotpatchCustomer.length ? normalizedHotpatchCustomer : normalizedCampaignLead;
+            const lengthDiff = longer.length - shorter.length;
+            if (longer.endsWith(shorter) && lengthDiff >= 0 && lengthDiff <= 4 && shorter.length >= 9) {
+              isHotpatchCustomerMatch = true;
+            }
+          }
+          
+          if (!isHotpatchCustomerMatch) {
+            console.log(`❌ BLA HOTPATCH CUSTOMER MISMATCH: transfer_enter to ${pattern2ndLeg.customerNumber} (${normalizedHotpatchCustomer}) != outbound customer ${campaignLeadNumber} (${normalizedCampaignLead})`);
+            return false;
+          }
+          console.log(`✅ BLA HOTPATCH CUSTOMER MATCH: transfer_enter customer ${pattern2ndLeg.customerNumber} matches outbound customer ${campaignLeadNumber}`);
+        }
       } else {
         console.log(`✅ BLA VALID 2ND LEG: Inbound call ${inboundCall.call_id} has 2nd leg pattern: agent_enter (NO transfer_enter to queue)`);
       }
@@ -1908,6 +2102,42 @@ export function linkCampaignToInboundCalls(campaignCalls, inboundCalls, usedInbo
           // Different call sessions: standard timing validation
           isValidTiming = timeDifference >= -60 && timeDifference <= 600;
           console.log(`🕐 BLA TIMING RESULT: ${isValidTiming ? '✅ VALID' : '❌ INVALID'} - agent_enter ${timeDifference}s ${timeDifference >= 0 ? 'after' : 'before'} Transfer`);
+        }
+        
+        // SPECIAL CASE FOR CAMPAIGN: For successful hotpatch patterns, use attended:transfer timestamps
+        // This handles cases where agent_enter happened early (consultation call) but actual transfer happened later
+        if (!isValidTiming && inboundCall._isSuccessfulHotpatch && inboundCall._hasAttendedTransfer) {
+          let inboundTransferTime = null;
+          let agentHistory = [];
+          if (typeof inboundCall.agent_history === 'string') {
+            try { agentHistory = JSON.parse(inboundCall.agent_history); } catch (e) {}
+          } else if (Array.isArray(inboundCall.agent_history)) {
+            agentHistory = inboundCall.agent_history;
+          }
+          
+          const inboundAttendedTransferEvent = agentHistory.find(event => 
+            event && event.type === 'attended' && event.event === 'transfer' &&
+            event.ext && isQueueExtension(event.ext)
+          );
+          
+          if (inboundAttendedTransferEvent && inboundAttendedTransferEvent.last_attempt) {
+            inboundTransferTime = inboundAttendedTransferEvent.last_attempt;
+            if (inboundTransferTime > 10000000000) {
+              inboundTransferTime = Math.floor(inboundTransferTime / 1000);
+            }
+            
+            // Compare campaign's Transfer time with inbound's attended:transfer time
+            // They should be very close (within 60 seconds)
+            const transferTimeDiff = inboundTransferTime - normalizedFirstLegTime;
+            console.log(`🕐 BLA CAMPAIGN HOTPATCH TIME CHECK: 1st leg Transfer=${new Date(normalizedFirstLegTime * 1000).toISOString()} -> 2nd leg attended:transfer=${new Date(inboundTransferTime * 1000).toISOString()}`);
+            console.log(`🕐 BLA CAMPAIGN HOTPATCH TIME DIFF: ${transferTimeDiff}s`);
+            
+            // Allow 60 seconds before to 120 seconds after
+            if (transferTimeDiff >= -60 && transferTimeDiff <= 120) {
+              isValidTiming = true;
+              console.log(`✅ BLA CAMPAIGN HOTPATCH TIMING OVERRIDE: Using attended:transfer timestamps (diff=${transferTimeDiff}s)`);
+            }
+          }
         }
       } else {
         // For outbound/inbound: agent_enter should be AFTER hold_start (or within 60s before for same-second timing)
@@ -2970,6 +3200,9 @@ export async function generateBLAHotPatchTransferReport(pool, filters) {
   console.log(`🔍 BLA INPUT DEBUG: end ISO parse: ${DateTime.fromISO(end).toISO()}`);
 
   try {
+    // Fetch queue-skill-history.json in parallel with DB queries
+    const skillHistoryPromise = fetchQueueSkillHistory();
+
     // Since final_report already stores timestamps in Asia/Dubai timezone, 
     // convert input dates directly to epochs without timezone conversion
     const startEpoch = Math.floor(
@@ -4195,7 +4428,94 @@ export async function generateBLAHotPatchTransferReport(pool, filters) {
 
     console.log(`✅ BLA REPORT COMPLETE: Generated report with ${reportData.length} linked transfer calls`);
 
-    // Step 10: Database operations disabled - BLA reports are for display only
+    // Step 10.5: Build extension → agent_name map from multiple sources
+    let extToNameMap = {};
+    try {
+      const [nameRows] = await pool.execute(
+        `SELECT DISTINCT extension, agent_name FROM final_report WHERE extension IS NOT NULL AND agent_name IS NOT NULL AND extension != '' AND agent_name != ''`
+      );
+      nameRows.forEach(r => { if (r.extension && r.agent_name) extToNameMap[String(r.extension)] = r.agent_name; });
+      console.log(`📋 EXT MAP: Built extension→name map with ${Object.keys(extToNameMap).length} entries from final_report`);
+    } catch (mapErr) {
+      console.error(`⚠️ EXT MAP: Failed to build map from final_report - ${mapErr.message}`);
+    }
+
+    // Supplement with names from inbound agent_history dial events and failed_transfers
+    processedInboundCalls.forEach(call => {
+      // Extract from agent_history dial events (have first_name, last_name, ext)
+      if (Array.isArray(call.agent_history)) {
+        call.agent_history.forEach(event => {
+          if (event && event.ext && (event.first_name || event.last_name)) {
+            const ext = String(event.ext);
+            if (!extToNameMap[ext]) {
+              const name = `${event.first_name || ''} ${event.last_name || ''}`.trim();
+              if (name) extToNameMap[ext] = name;
+            }
+          }
+        });
+      }
+      // Extract from failed_transfers
+      if (Array.isArray(call.failed_transfers)) {
+        call.failed_transfers.forEach(f => {
+          if (f.extension && f.agent_name) {
+            const ext = String(f.extension);
+            if (!extToNameMap[ext]) extToNameMap[ext] = f.agent_name;
+          }
+        });
+      }
+    });
+    // Also extract from campaign/outbound agent histories
+    [...processedCampaignCalls, ...processedOutboundCalls].forEach(call => {
+      if (Array.isArray(call.agent_history)) {
+        call.agent_history.forEach(event => {
+          if (event && event.ext && (event.first_name || event.last_name)) {
+            const ext = String(event.ext);
+            if (!extToNameMap[ext]) {
+              const name = `${event.first_name || ''} ${event.last_name || ''}`.trim();
+              if (name) extToNameMap[ext] = name;
+            }
+          }
+        });
+      }
+    });
+    console.log(`📋 EXT MAP: Final extension→name map has ${Object.keys(extToNameMap).length} entries (after supplementing from agent histories)`);
+
+    // Step 10.6: Enrich report data with queue skill history
+    const skillHistoryData = await skillHistoryPromise;
+    let skillHistoryMatched = 0;
+    reportData.forEach(record => {
+      let entries = null;
+
+      // 1) Try matching by inbound_call_id (successful transfers)
+      if (record.inbound_call_id && skillHistoryData[record.inbound_call_id]) {
+        entries = skillHistoryData[record.inbound_call_id];
+      }
+
+      // 2) For failed transfers, try matching by abandoned_calls call IDs
+      if (!entries && Array.isArray(record.abandoned_calls)) {
+        for (const abandoned of record.abandoned_calls) {
+          if (abandoned.call_id && skillHistoryData[abandoned.call_id]) {
+            entries = skillHistoryData[abandoned.call_id];
+            break;
+          }
+        }
+      }
+
+      if (entries) {
+        const skillInfo = processSkillHistoryForCall(entries, extToNameMap);
+        record.skill_agents_not_available = skillInfo.skill_agents_not_available;
+        record.skill_attempts = skillInfo.skill_attempts;
+        record.skill_agent_answered = skillInfo.skill_agent_answered;
+        skillHistoryMatched++;
+      } else {
+        record.skill_agents_not_available = [];
+        record.skill_attempts = [];
+        record.skill_agent_answered = '--';
+      }
+    });
+    console.log(`📋 SKILL HISTORY: Enriched ${skillHistoryMatched}/${reportData.length} records with skill history data`);
+
+    // Step 11: Database operations disabled - BLA reports are for display only
     console.log(`� BLA DATABASE: Database operations disabled - reports are for display only`);
     console.log(`� BLA DATABASE: Generated ${reportData.length} transfer records for display (not persisted)`);
     
