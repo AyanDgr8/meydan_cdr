@@ -757,7 +757,7 @@ function showRecordingsModal(recordings) {
 }
 
 
-// Play recording in a modal with waveform 
+// Play recording in a premium modal with advanced waveform player
 function playRecording(url, fileName) {
   console.log('Playing recording:', url);
 
@@ -767,47 +767,92 @@ function playRecording(url, fileName) {
     return;
   }
 
-  // Use provided fileName or extract from URL
   if (!fileName) {
     fileName = url.split('/').pop().split('?')[0];
   }
 
-  // FIX 2: Create HTML5 Audio FIRST for instant playback (0.2-0.5s start)
   const audio = new Audio(url);
   audio.preload = 'metadata';
-  
-  // Create modal
+
+  // Create premium modal
   const modal = document.createElement('div');
   modal.className = 'modal is-active recording-modal';
   modal.innerHTML = `
-    <div class="modal-background"></div>
-    <div class="modal-card">
-      <header class="modal-card-head font-size-xs">
-        <p class="modal-card-title font-size-0.5rem">Recording: ${fileName}</p>
-        <button class="delete" aria-label="close"></button>
-      </header>
-      <section class="modal-card-body">
-        <div id="waveform" style="margin-bottom:0.5rem;"></div>
-        <div class="compact-player-controls">
-          <button class="button is-small" id="rewBtn" title="Rewind 10s"><i class="material-icons">fast_rewind</i></button>
-          <button class="button is-primary compact-play-btn" style="border-radius:50%;" id="playBtn" title="Play"><i class="material-icons" id="playIcon">play_arrow</i></button>
-          <button class="button is-small" id="fwdBtn" title="Forward 10s"><i class="material-icons">fast_forward</i></button>
-          <span id="timeLbl" style="font-size:0.8rem;">0:00 / --:--</span>
-          <button class="button is-small is-light" id="speedBtn" title="Switch speed">1x</button>
+    <div class="modal-background ap-backdrop"></div>
+    <div class="ap-card">
+      <!-- Close button -->
+      <button class="ap-close" aria-label="close" title="Close (Esc)">
+        <i class="material-icons">close</i>
+      </button>
+
+      <!-- Header -->
+      <div class="ap-header">
+        <div class="ap-album-art">
+          <div class="ap-vinyl">
+            <div class="ap-vinyl-inner"></div>
+          </div>
         </div>
-        <div style="position:absolute; bottom:10px; right:5px;" title="Download Recording">
-          <a id="downloadBtn" href="${url}" download="${fileName.endsWith('.mp3') ? fileName : fileName + '.mp3'}"><i class="material-icons">file_download</i></a>
+        <div class="ap-track-info">
+          <div class="ap-track-title" title="${fileName}">${fileName}</div>
+          <div class="ap-track-sub">Call Recording</div>
         </div>
-      </section>
+      </div>
+
+      <!-- Waveform -->
+      <div class="ap-waveform-wrap">
+        <div id="waveform"></div>
+        <div class="ap-loading-indicator" id="apLoader">
+          <div class="ap-spinner"></div>
+          <span>Loading waveform...</span>
+        </div>
+      </div>
+
+      <!-- Time row -->
+      <div class="ap-time-row">
+        <span id="apTimeCur" class="ap-time">0:00</span>
+        <span id="apTimeDur" class="ap-time">--:--</span>
+      </div>
+
+      <!-- Main controls -->
+      <div class="ap-controls">
+        <button class="ap-btn ap-btn-sm" id="apRew" title="Rewind 10s (←)">
+          <i class="material-icons">replay_10</i>
+        </button>
+        <button class="ap-btn ap-btn-play" id="apPlay" title="Play / Pause (Space)">
+          <i class="material-icons" id="apPlayIcon">play_arrow</i>
+        </button>
+        <button class="ap-btn ap-btn-sm" id="apFwd" title="Forward 10s (→)">
+          <i class="material-icons">forward_10</i>
+        </button>
+      </div>
+
+      <!-- Secondary controls -->
+      <div class="ap-secondary">
+        <div class="ap-vol-group">
+          <button class="ap-btn ap-btn-xs" id="apMute" title="Mute (M)">
+            <i class="material-icons" id="apVolIcon">volume_up</i>
+          </button>
+          <input type="range" class="ap-vol-slider" id="apVol" min="0" max="100" value="100" title="Volume">
+        </div>
+        <button class="ap-btn ap-btn-speed" id="apSpeed" title="Playback speed (S)">1x</button>
+        <a class="ap-btn ap-btn-xs" id="apDownload" href="${url}" download="${fileName.endsWith('.mp3') ? fileName : fileName + '.mp3'}" title="Download">
+          <i class="material-icons">file_download</i>
+        </a>
+      </div>
+
+      <!-- Keyboard hint -->
+      <div class="ap-hint">Space&nbsp;Play &middot; ←→&nbsp;Skip &middot; ↑↓&nbsp;Vol &middot; M&nbsp;Mute &middot; S&nbsp;Speed</div>
     </div>
   `;
   document.body.appendChild(modal);
 
-  // FIX 6: WaveSurfer should already be loaded at page load
+  // Animate entrance
+  requestAnimationFrame(() => modal.querySelector('.ap-card').classList.add('ap-visible'));
+
+  // Init WaveSurfer
   if (window.WaveSurfer) {
     initPlayer();
   } else {
-    // Fallback: load dynamically if not pre-loaded
     const script = document.createElement('script');
     script.src = "https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js";
     script.onload = () => initPlayer();
@@ -815,69 +860,154 @@ function playRecording(url, fileName) {
   }
 
   function initPlayer() {
-    // FIX 3: Use MediaElement backend with existing audio element
     const wavesurfer = WaveSurfer.create({
       container: '#waveform',
-      waveColor: '#90caf9',
-      progressColor: '#1976d2',
-      cursorColor: '#ef5350',
-      barWidth: 2,
+      waveColor: 'rgba(255,255,255,0.35)',
+      progressColor: '#FF8C32',
+      cursorColor: 'rgba(255,255,255,0.7)',
+      cursorWidth: 2,
+      barWidth: 3,
+      barGap: 2,
+      barRadius: 3,
       responsive: true,
       backend: 'MediaElement',
-      media: audio, // Attach to existing audio element
-      height: 60,
+      media: audio,
+      height: 64,
+      barAlign: 'bottom',
+      normalize: true,
     });
 
-    const playBtn = document.getElementById('playBtn');
-    const rewBtn = document.getElementById('rewBtn');
-    const fwdBtn = document.getElementById('fwdBtn');
-    const speedBtn = document.getElementById('speedBtn');
-    const timeLbl = document.getElementById('timeLbl');
+    const vinyl = modal.querySelector('.ap-vinyl');
+    const loader = document.getElementById('apLoader');
+    const playBtn = document.getElementById('apPlay');
+    const rewBtn = document.getElementById('apRew');
+    const fwdBtn = document.getElementById('apFwd');
+    const speedBtn = document.getElementById('apSpeed');
+    const muteBtn = document.getElementById('apMute');
+    const volSlider = document.getElementById('apVol');
+    const timeCur = document.getElementById('apTimeCur');
+    const timeDur = document.getElementById('apTimeDur');
+    const playIcon = document.getElementById('apPlayIcon');
+    const volIcon = document.getElementById('apVolIcon');
 
-    // Play/pause
-    playBtn.onclick = () => {
-      wavesurfer.playPause();
-      document.getElementById('playIcon').textContent =
-        wavesurfer.isPlaying() ? 'pause' : 'play_arrow';
-    };
+    let speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    let speedIdx = 2; // default 1x
+    let prevVolume = 1;
 
-    // Rewind/forward
+    // Update play/pause UI
+    function syncPlayState() {
+      const playing = wavesurfer.isPlaying();
+      playIcon.textContent = playing ? 'pause' : 'play_arrow';
+      playBtn.classList.toggle('ap-playing', playing);
+      vinyl.classList.toggle('ap-spinning', playing);
+    }
+
+    // Play / Pause
+    playBtn.onclick = () => { wavesurfer.playPause(); syncPlayState(); };
+    wavesurfer.on('play', syncPlayState);
+    wavesurfer.on('pause', syncPlayState);
+    wavesurfer.on('finish', syncPlayState);
+
+    // Skip
     rewBtn.onclick = () => wavesurfer.skip(-10);
     fwdBtn.onclick = () => wavesurfer.skip(10);
 
-    // Speed control
-    let speeds = [1, 1.25, 1.5, 2];
+    // Speed
     speedBtn.onclick = () => {
-      const cur = wavesurfer.getPlaybackRate();
-      const idx = (speeds.indexOf(cur) + 1) % speeds.length;
-      const next = speeds[idx];
-      wavesurfer.setPlaybackRate(next);
-      speedBtn.textContent = next + 'x';
+      speedIdx = (speedIdx + 1) % speeds.length;
+      const s = speeds[speedIdx];
+      wavesurfer.setPlaybackRate(s);
+      speedBtn.textContent = s + 'x';
     };
 
-    // Update time label
+    // Volume
+    volSlider.oninput = () => {
+      const v = volSlider.value / 100;
+      wavesurfer.setVolume(v);
+      updateVolIcon(v);
+    };
+    muteBtn.onclick = () => {
+      const cur = wavesurfer.getVolume();
+      if (cur > 0) {
+        prevVolume = cur;
+        wavesurfer.setVolume(0);
+        volSlider.value = 0;
+        updateVolIcon(0);
+      } else {
+        wavesurfer.setVolume(prevVolume);
+        volSlider.value = prevVolume * 100;
+        updateVolIcon(prevVolume);
+      }
+    };
+    function updateVolIcon(v) {
+      volIcon.textContent = v === 0 ? 'volume_off' : v < 0.5 ? 'volume_down' : 'volume_up';
+    }
+
+    // Time display
     wavesurfer.on('audioprocess', () => {
-      const cur = wavesurfer.getCurrentTime();
-      const dur = wavesurfer.getDuration();
-      timeLbl.textContent = `${fmt(cur)} / ${dur ? fmt(dur) : '--:--'}`;
+      timeCur.textContent = fmt(wavesurfer.getCurrentTime());
     });
     wavesurfer.on('ready', () => {
-      const dur = wavesurfer.getDuration();
-      timeLbl.textContent = `0:00 / ${fmt(dur)}`;
+      timeDur.textContent = fmt(wavesurfer.getDuration());
+      if (loader) loader.style.display = 'none';
+    });
+    wavesurfer.on('seeking', () => {
+      timeCur.textContent = fmt(wavesurfer.getCurrentTime());
     });
 
-    // ✅ Closing modal (X, background, Esc)
-    const closeModal = () => {
-      wavesurfer.destroy();
-      audio.pause();
-      audio.src = '';
-      document.body.removeChild(modal);
-    };
-    modal.querySelector('.modal-background').onclick = closeModal;
-    modal.querySelector('.delete').onclick = closeModal;
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') closeModal();
-    });
+    // Keyboard shortcuts (scoped to this modal)
+    function handleKey(e) {
+      if (!document.body.contains(modal)) return;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          wavesurfer.playPause();
+          syncPlayState();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          wavesurfer.skip(-10);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          wavesurfer.skip(10);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          volSlider.value = Math.min(100, +volSlider.value + 5);
+          volSlider.dispatchEvent(new Event('input'));
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          volSlider.value = Math.max(0, +volSlider.value - 5);
+          volSlider.dispatchEvent(new Event('input'));
+          break;
+        case 'm': case 'M':
+          muteBtn.click();
+          break;
+        case 's': case 'S':
+          speedBtn.click();
+          break;
+        case 'Escape':
+          closeModal();
+          break;
+      }
+    }
+    document.addEventListener('keydown', handleKey);
+
+    // Close
+    function closeModal() {
+      document.removeEventListener('keydown', handleKey);
+      modal.querySelector('.ap-card').classList.remove('ap-visible');
+      setTimeout(() => {
+        wavesurfer.destroy();
+        audio.pause();
+        audio.src = '';
+        if (document.body.contains(modal)) document.body.removeChild(modal);
+      }, 250);
+    }
+    modal.querySelector('.ap-backdrop').onclick = closeModal;
+    modal.querySelector('.ap-close').onclick = closeModal;
   }
 
   function fmt(sec) {

@@ -335,40 +335,262 @@
       color: black;
     }
 
-    /* Recording modal styling */
-    .recording-modal .modal-card {
-      max-width: 400px;
-      margin: 0 auto;
-      border-radius: 8px;
+    /* ===== Premium Audio Player (ap-*) ===== */
+    .ap-backdrop {
+      background: rgba(0,0,0,0.65) !important;
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    .ap-card {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) scale(0.92);
+      width: 520px;
+      max-width: 96vw;
+      background: linear-gradient(135deg, #1e1e2f 0%, #2a1f4e 50%, #1a1a2e 100%);
+      border-radius: 20px;
+      padding: 28px 24px 20px;
+      box-shadow:
+        0 24px 80px rgba(0,0,0,0.55),
+        0 0 0 1px rgba(255,255,255,0.08) inset,
+        0 0 60px rgba(255,140,50,0.15);
+      color: #fff;
+      opacity: 0;
+      transition: transform .3s cubic-bezier(.22,1,.36,1), opacity .3s ease;
+      z-index: 1000;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .ap-card.ap-visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    /* Close */
+    .ap-close {
+      position: absolute; top: 10px; right: 12px;
+      background: rgba(255,255,255,0.08);
+      border: none; border-radius: 50%;
+      width: 32px; height: 32px;
+      display: grid; place-items: center;
+      color: rgba(255,255,255,0.55);
+      cursor: pointer;
+      transition: background .2s, color .2s, transform .15s;
+    }
+    .ap-close:hover { background: rgba(255,255,255,0.18); color: #fff; transform: scale(1.1); }
+    .ap-close .material-icons { font-size: 18px; }
+
+    /* Header */
+    .ap-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .ap-album-art {
+      width: 56px; height: 56px;
+      flex-shrink: 0;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #FF8C32 0%, #FF5E1A 100%);
+      display: grid; place-items: center;
+      box-shadow: 0 4px 20px rgba(255,94,26,0.4);
+    }
+    .ap-vinyl {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      background: repeating-radial-gradient(circle at center, #222 0px, #222 4px, #333 5px, #333 7px, #222 8px);
+      display: grid; place-items: center;
+      transition: transform .3s;
+    }
+    .ap-vinyl.ap-spinning {
+      animation: ap-spin 2s linear infinite;
+    }
+    @keyframes ap-spin { to { transform: rotate(360deg); } }
+    .ap-vinyl-inner {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #FF8C32, #FF5E1A);
+      box-shadow: 0 0 6px rgba(255,94,26,0.6);
+    }
+    .ap-track-info { overflow: hidden; }
+    .ap-track-title {
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 380px;
+    }
+    .ap-track-sub {
+      font-size: 11px;
+      color: rgba(255,255,255,0.45);
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+    }
+
+    /* Waveform */
+    .ap-waveform-wrap {
+      position: relative;
+      background: rgba(255,255,255,0.04);
+      border-radius: 12px;
+      padding: 10px 10px 6px;
+      margin-bottom: 8px;
       overflow: hidden;
     }
-
-    .recording-modal .modal-card-head {
-      padding: 0.25rem;
-      background-color: #4a4a4a;
-      color: white;
+    .ap-waveform-wrap::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.06);
+      pointer-events: none;
     }
-
-    .recording-modal .modal-card-body {
-      padding: 0.75rem;
-    }
-
-    .recording-modal .modal-card-title {
-      font-size: 0.9rem;
-      color: white;
-    }
-
-    .compact-player-controls {
+    .ap-loading-indicator {
+      position: absolute;
+      inset: 0;
       display: flex;
-      gap: 0.5rem;
-      justify-content: center;
       align-items: center;
+      justify-content: center;
+      gap: 10px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+      background: rgba(30,30,47,0.85);
+      border-radius: 12px;
+      z-index: 2;
+    }
+    .ap-spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.15);
+      border-top-color: #FF8C32;
+      border-radius: 50%;
+      animation: ap-spin .7s linear infinite;
     }
 
-    .compact-play-btn {
-      width: 50px !important;
-      height: 50px !important;
-      font-size: 1.5rem !important;
+    /* Time */
+    .ap-time-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0 4px;
+      margin-bottom: 14px;
+    }
+    .ap-time {
+      font-size: 11px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.45);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.5px;
+    }
+
+    /* Main controls */
+    .ap-controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      margin-bottom: 16px;
+    }
+    .ap-btn {
+      display: inline-grid;
+      place-items: center;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      color: rgba(255,255,255,0.8);
+      background: transparent;
+      transition: background .2s, color .15s, transform .15s, box-shadow .2s;
+      text-decoration: none;
+    }
+    .ap-btn:hover { color: #fff; }
+    .ap-btn-sm {
+      width: 42px; height: 42px;
+      background: rgba(255,255,255,0.06);
+    }
+    .ap-btn-sm:hover { background: rgba(255,140,50,0.18); transform: scale(1.08); }
+    .ap-btn-sm .material-icons { font-size: 22px; }
+
+    .ap-btn-play {
+      width: 58px; height: 58px;
+      background: linear-gradient(135deg, #FF8C32 0%, #FF5E1A 100%);
+      box-shadow: 0 4px 24px rgba(255,94,26,0.45);
+    }
+    .ap-btn-play:hover { transform: scale(1.1); box-shadow: 0 6px 30px rgba(255,94,26,0.6); }
+    .ap-btn-play:active { transform: scale(0.96); }
+    .ap-btn-play .material-icons { font-size: 30px; color: #fff; }
+    .ap-btn-play.ap-playing { animation: ap-pulse 1.8s ease-in-out infinite; }
+    @keyframes ap-pulse {
+      0%,100% { box-shadow: 0 4px 24px rgba(255,94,26,0.45); }
+      50%     { box-shadow: 0 4px 36px rgba(255,94,26,0.7); }
+    }
+
+    /* Secondary controls */
+    .ap-secondary {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+    .ap-btn-xs {
+      width: 34px; height: 34px;
+      background: rgba(255,255,255,0.05);
+    }
+    .ap-btn-xs:hover { background: rgba(255,140,50,0.18); transform: scale(1.1); }
+    .ap-btn-xs .material-icons { font-size: 18px; }
+
+    .ap-btn-speed {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.06);
+      font-family: inherit;
+      min-width: 40px;
+      text-align: center;
+    }
+    .ap-btn-speed:hover { background: rgba(255,140,50,0.18); }
+
+    /* Volume */
+    .ap-vol-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .ap-vol-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 80px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.12);
+      outline: none;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .ap-vol-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: #FF8C32;
+      box-shadow: 0 0 6px rgba(255,140,50,0.5);
+      cursor: pointer;
+      transition: transform .15s;
+    }
+    .ap-vol-slider::-webkit-slider-thumb:hover { transform: scale(1.25); }
+    .ap-vol-slider::-moz-range-thumb {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: #FF8C32;
+      border: none;
+      cursor: pointer;
+    }
+
+    /* Keyboard hint */
+    .ap-hint {
+      text-align: center;
+      font-size: 10px;
+      color: rgba(255,255,255,0.2);
+      letter-spacing: 0.3px;
+      padding-top: 4px;
     }
 
     .account-row .label.is-small {
