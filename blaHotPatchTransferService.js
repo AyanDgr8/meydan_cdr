@@ -42,7 +42,8 @@ const queueToCalleeExtensionMap = {
   '8021': '7060'  // Test_hotpatch queue 
 };
 
-const SKILL_HISTORY_URL = 'https://ira-meydan-du.ucprem.voicemeetme.com/tmp/queue-skill-history.json';
+// const SKILL_HISTORY_URL = 'https://ira-meydan-du.ucprem.voicemeetme.com/tmp/queue-skill-history.json';
+const SKILL_HISTORY_URL = 'https://queue.ira-meydan-du.ucprem.voicemeetme.com/queue_skill_group_history/544370e9c33f4d679f0f1d37778d3c7c';
 const skillHistoryHttpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 /**

@@ -20,11 +20,9 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import mysql from 'mysql2/promise';
 import dbService, { checkDataExists, clearCache } from './dbService.js';
+import finalReportService from './finalReportService.js';
 import { DateTime } from 'luxon';
 import { generateBLAHotPatchTransferReport } from './blaHotPatchTransferService.js';
-
-// import finalReportService from './finalReportService.js';
-// import recordingsFetcher from './recordingsFetcher.js';
 
 dotenv.config();
 
@@ -64,7 +62,7 @@ app.use(cookieParser());
 //   next();
 // });
 
-const PORT = process.env.PORT || 9004;
+const PORT = process.env.PORT || 9567;
 const HOST = process.env.HOST || '0.0.0.0'; // 0.0.0.0 ensures the server binds to all network interfaces
 const PUBLIC_URL = process.env.PUBLIC_URL || `https://${HOST}:${PORT}`;
 
@@ -80,31 +78,32 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/hot-patch', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'hot-patch.html'));
 });
+
 // --- Authentication setup ---
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key';
 
 // Create MySQL connection pool
-// const pool = mysql.createPool({
-//   host:  'localhost',
-//   user: 'root',
-//   password: 'Ayan@1012',
-//   database: 'meydan_main_cdr',
-//   port: 3306,
-//   waitForConnections: true,
-//   connectionLimit: 10,
-//   queueLimit: 0
-// });
-
 const pool = mysql.createPool({
-  host:"0.0.0.0",
-  user: 'multycomm',
-  password: 'WELcome@123',
-  database: 'meydan_main_cdr',
+  host:  'localhost',
+  user: 'root',
+  password: 'Ayan@1012',
+  database: 'ds_main_cdr',
   port: 3306,
   waitForConnections: true,
-  connectionLimit: 20,
+  connectionLimit: 10,
   queueLimit: 0
 });
+
+//  const pool = mysql.createPool({
+//    host:"0.0.0.0",
+//    user: 'multycomm',
+//    password: 'WELcome@123',
+//    database: 'ds_main_cdr',
+//    port: 3306,
+//    waitForConnections: true,
+//    connectionLimit: 20,
+//    queueLimit: 0
+//  });
 
 // Login
 app.post('/api/login', async (req, res) => {
@@ -749,7 +748,6 @@ app.get('/api/recordings/by-call-id/:yearMonthCallId', async (req, res) => {
   }
 });
 
-
 // SSL Certificate Management
 const loadSSLCertificates = () => {
   try {
@@ -778,14 +776,6 @@ const loadSSLCertificates = () => {
 
 const sslOptions = loadSSLCertificates();
 
-// // Route for transfer queue report page
-// app.get('/bla', (req, res) => {
-//   console.log('🔄 /bla route accessed');
-//   const filePath = path.join(__dirname, 'public', 'transfer-queue-report.html');
-//   console.log('📁 Serving file:', filePath);
-//   res.sendFile(filePath);
-// });
-
 // Store active queries for progressive loading
 const activeQueries = new Map();
 
@@ -793,6 +783,117 @@ const activeQueries = new Map();
 function generateQueryId() {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
+
+// ─── Clustered (server-side) pagination endpoint ───
+// Returns ONE page of data at a time with total count + record-type summary.
+// The frontend never holds more than one page in the DOM.
+app.post('/api/reports/clustered', async (req, res) => {
+  const requestId = Math.random().toString(36).substring(2, 10);
+
+  try {
+    const {
+      start, end,
+      contact_number, agent_name, extension, queue_campaign_name,
+      record_type, agent_disposition, sub_disp_1, sub_disp_2,
+      status, campaign_type, country, transfer_event,
+      sort_by = 'called_time', sort_order = 'desc',
+      page = 1, pageSize = 100
+    } = req.body;
+
+    if (!start || !end) {
+      return res.status(400).json({ success: false, message: 'start and end are required', request_id: requestId });
+    }
+
+    // --- timezone-robust epoch conversion ---
+    const startEpoch = Math.floor(DateTime.fromISO(start, { zone: 'Asia/Dubai' }).toUTC().toSeconds());
+    const endEpochExclusive = Math.floor(DateTime.fromISO(end, { zone: 'Asia/Dubai' }).toUTC().toSeconds());
+
+    // ── Build WHERE clause (shared by data + count queries) ──
+    let whereClauses = ['called_time >= ?', 'called_time < ?'];
+    const whereValues = [startEpoch, endEpochExclusive];
+
+    if (contact_number) {
+      whereClauses.push('(caller_id_number LIKE ? OR callee_id_number LIKE ? OR phone_number LIKE ?)');
+      whereValues.push(`%${contact_number}%`, `%${contact_number}%`, `%${contact_number}%`);
+    }
+    if (agent_name)           { whereClauses.push('agent_name LIKE ?');           whereValues.push(`%${agent_name}%`); }
+    if (queue_campaign_name)  { whereClauses.push('queue_campaign_name LIKE ?');  whereValues.push(`%${queue_campaign_name}%`); }
+    if (record_type)          { whereClauses.push('record_type = ?');             whereValues.push(record_type); }
+    if (agent_disposition)    { whereClauses.push('agent_disposition LIKE ?');     whereValues.push(`%${agent_disposition}%`); }
+    if (sub_disp_1)           { whereClauses.push('sub_disp_1 LIKE ?');           whereValues.push(`%${sub_disp_1}%`); }
+    if (sub_disp_2)           { whereClauses.push('sub_disp_2 LIKE ?');           whereValues.push(`%${sub_disp_2}%`); }
+    if (status)               { whereClauses.push('status LIKE ?');               whereValues.push(`%${status}%`); }
+    if (campaign_type)        { whereClauses.push('campaign_type LIKE ?');         whereValues.push(`%${campaign_type}%`); }
+    if (country)              { whereClauses.push('country LIKE ?');               whereValues.push(`%${country}%`); }
+    if (extension)            { whereClauses.push('extension LIKE ?');             whereValues.push(`%${extension}%`); }
+
+    if (transfer_event === '1' || transfer_event === 1 || transfer_event === 'Yes' || transfer_event === true) {
+      whereClauses.push('transfer_event = 1');
+    } else if (transfer_event === '0' || transfer_event === 0 || transfer_event === 'No' || transfer_event === false) {
+      whereClauses.push('(transfer_event = 0 OR transfer_event IS NULL)');
+    }
+
+    const whereSQL = whereClauses.join(' AND ');
+
+    // ── 1. Total count ──
+    const countSQL = `SELECT COUNT(*) as total FROM final_report USE INDEX (idx_called_time) WHERE ${whereSQL}`;
+    const countResult = await dbService.query(countSQL, whereValues);
+    const totalRecords = countResult[0].total;
+
+    // ── 2. Record-type summary (lightweight – single pass) ──
+    const summarySQL = `SELECT record_type, COUNT(*) as cnt FROM final_report USE INDEX (idx_called_time) WHERE ${whereSQL} GROUP BY record_type`;
+    const summaryRows = await dbService.query(summarySQL, whereValues);
+    const summary = { Campaign: 0, Inbound: 0, Outbound: 0 };
+    summaryRows.forEach(r => { if (summary[r.record_type] !== undefined) summary[r.record_type] = r.cnt; });
+
+    // ── 3. Validate sort column ──
+    const validSortColumns = [
+      'call_id','record_type','type','agent_name','extension','queue_campaign_name',
+      'called_time','called_time_formatted','caller_id_number','caller_id_name','callee_id_number',
+      'answered_time','hangup_time','wait_duration','talk_duration','hold_duration',
+      'agent_hangup','agent_disposition','disposition','sub_disp_1','sub_disp_2',
+      'status','campaign_type','abandoned','country',
+      'transfer_event','transfer_extension','transfer_type','created_at','updated_at'
+    ];
+    const sortColumn = validSortColumns.includes(sort_by) ? sort_by : 'called_time';
+    const sortDir = sort_order?.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+
+    // ── 4. Paginated data query ──
+    const safePageSize = Math.min(Math.max(parseInt(pageSize) || 100, 10), 500);
+    const safePage = Math.max(parseInt(page) || 1, 1);
+    const offset = (safePage - 1) * safePageSize;
+    const totalPages = Math.ceil(totalRecords / safePageSize);
+
+    const dataSQL = `SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name,
+      called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number,
+      answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
+      agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2,
+      status, campaign_type, abandoned, country, follow_up_notes,
+      agent_history, queue_history, lead_history, recording,
+      transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat, phone_number
+      FROM final_report USE INDEX (idx_called_time)
+      WHERE ${whereSQL}
+      ORDER BY ${sortColumn} ${sortDir}
+      LIMIT ${safePageSize} OFFSET ${offset}`;
+
+    const data = await dbService.query(dataSQL, whereValues);
+
+    return res.json({
+      success: true,
+      data,
+      page: safePage,
+      pageSize: safePageSize,
+      totalPages,
+      totalRecords,
+      summary,
+      request_id: requestId
+    });
+
+  } catch (error) {
+    console.error(`Clustered query error (${requestId}):`, error.message);
+    return res.status(500).json({ success: false, error: error.message, request_id: requestId });
+  }
+});
 
 // Progressive loading endpoint
 app.get('/api/reports/progressive', async (req, res) => {
@@ -867,6 +968,22 @@ app.get('/api/reports/progressive', async (req, res) => {
     
     const results = await dbService.query(pageSql, values);
     
+    // Debug: Log the first result to see if hold_duration_intervals is included
+    console.log(`Total records matching query: ${totalRecords}`);
+    console.log('First result keys:', Object.keys(results[0] || {}));
+    console.log('hold_duration_intervals in first result:', results[0]?.hold_duration_intervals);
+        
+    // Debug: Show first few records' timestamp and formatted time data
+    if (results.length > 0) {
+      console.log('=== DEBUG: First 3 records timestamp data ===');
+      results.slice(0, 3).forEach((record, index) => {
+        console.log(`Record ${index + 1}:`);
+        console.log(`  called_time: ${record.called_time}`);
+        console.log(`  called_time_formatted: ${record.called_time_formatted}`);
+      });
+      console.log('=== END DEBUG ===');
+    }
+    
     // Calculate if this is the last page
     const totalPages = Math.ceil(totalRecords / pageSize);
     const isLastPage = pageNum >= totalPages;
@@ -903,8 +1020,7 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     // Extract query parameters from request body
     const {
       start,
-      end,
-      call_id,
+      end,      
       contact_number,
       agent_name,
       extension,
@@ -913,7 +1029,6 @@ app.post('/api/reports/progressive/init', async (req, res) => {
       agent_disposition,
       sub_disp_1,
       sub_disp_2,
-      sub_disp_3,
       status,
       campaign_type,
       country,
@@ -967,23 +1082,23 @@ app.post('/api/reports/progressive/init', async (req, res) => {
         request_id: requestId
       });
     }
-    // Epoch-based date filter — uses idx_called_time index, much faster than string matching
-    const startEpoch = Math.floor(DateTime.fromISO(start, { zone: 'Asia/Dubai' }).toUTC().toSeconds());
-    const endEpochExclusive = Math.ceil(DateTime.fromISO(end, { zone: 'Asia/Dubai' }).toUTC().toSeconds());
-    console.log(`Date range: ${start} to ${end} (epoch: ${startEpoch} to ${endEpochExclusive})`);
-
-    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, status, campaign_type, abandoned, country, follow_up_notes, agent_history, queue_history, lead_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time) WHERE called_time >= ? AND called_time < ?';
+    // --- timezone-robust parsing (requires luxon) ---
+    const startEpoch = Math.floor(
+      DateTime.fromISO(start, { zone: 'Asia/Dubai' }).toUTC().toSeconds()
+    );
+    const endEpochExclusive = Math.floor(
+      DateTime.fromISO(end, { zone: 'Asia/Dubai' }).toUTC().toSeconds()
+    );
+    
+    // Build SQL query directly - use indexed fields and limit columns for better performance
+    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, status, campaign_type, abandoned, country, follow_up_notes, agent_history, queue_history, lead_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat, phone_number FROM final_report USE INDEX (idx_called_time) WHERE called_time >= ? AND called_time < ? ';
     const values = [startEpoch, endEpochExclusive];
     
+
     // Add optional filters
-    if (call_id) {
-      sql += ' AND call_id LIKE ?';
-      values.push(`%${call_id}%`);
-    }
-    
     if (contact_number) {
-      sql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
-      values.push(`%${contact_number}%`, `%${contact_number}%`);
+      sql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ? OR phone_number LIKE ?)';
+      values.push(`%${contact_number}%`, `%${contact_number}%`, `%${contact_number}%`);
     }
     
     if (agent_name) {
@@ -1014,11 +1129,6 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     if (sub_disp_2) {
       sql += ' AND sub_disp_2 LIKE ?';
       values.push(`%${sub_disp_2}%`);
-    }
-    
-    if (sub_disp_3) {
-      sql += ' AND sub_disp_3 = ?';
-      values.push(sub_disp_3);
     }
     
     if (status) {
@@ -1054,10 +1164,9 @@ app.post('/api/reports/progressive/init', async (req, res) => {
       'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
       'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
       'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
-      'agent_hangup', 'agent_disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
+      'agent_hangup', 'agent_disposition', 'sub_disp_1', 'sub_disp_2',
       'status', 'campaign_type', 'abandoned', 'country', 
-      'transfer_event', 'transfer_extension', 'transfer_queue_extension', 'transfer_type', 'csat',
-      'created_at', 'updated_at'
+      'transfer_event', 'transfer_extension', 'transfer_type', 'created_at', 'updated_at'
     ];
     
     const sortColumn = validSortColumns.includes(sort_by) ? sort_by : 'called_time';
@@ -1066,19 +1175,14 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     // Add sorting
     sql += ` ORDER BY ${sortColumn} ${sortDir}`;
     
-    // Count query — same epoch-based filter
+    // First, get the total count without pagination
     let countSql = `SELECT COUNT(*) as total FROM final_report USE INDEX (idx_called_time) WHERE called_time >= ? AND called_time < ?`;
     let countValues = [startEpoch, endEpochExclusive];
     
-    if (call_id) {
-      countSql += ' AND call_id LIKE ?';
-      countValues.push(`%${call_id}%`);
-    }
     if (contact_number) {
       countSql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
       countValues.push(`%${contact_number}%`, `%${contact_number}%`);
     }
-    
     if (agent_name) {
       countSql += ' AND agent_name LIKE ?';
       countValues.push(`%${agent_name}%`);
@@ -1086,7 +1190,7 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     if (queue_campaign_name) {
       countSql += ' AND queue_campaign_name LIKE ?';
       countValues.push(`%${queue_campaign_name}%`);
-    } 
+    }
     if (record_type) {
       countSql += ' AND record_type = ?';
       countValues.push(record_type);
@@ -1102,10 +1206,6 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     if (sub_disp_2) {
       countSql += ' AND sub_disp_2 LIKE ?';
       countValues.push(`%${sub_disp_2}%`);
-    }
-    if (sub_disp_3) {
-      countSql += ' AND sub_disp_3 = ?';
-      countValues.push(sub_disp_3);
     }
     if (status) {
       countSql += ' AND status LIKE ?';
@@ -1193,11 +1293,11 @@ app.get('/api/filters/queue-campaign', async (req, res) => {
     const sql = `
       SELECT DISTINCT queue_campaign_name
       FROM final_report
-      WHERE queue_campaign_name IS NOT NULL AND queue_campaign_name != ''
+      WHERE called_time BETWEEN ? AND ?
       ORDER BY queue_campaign_name
     `;
 
-    const rows = await dbService.query(sql);
+    const rows = await dbService.query(sql, [from_ts, to_ts]);
 
     res.json({
       success: true,
@@ -1228,11 +1328,12 @@ app.get('/api/filters/agent-disposition', async (req, res) => {
     const sql = `
       SELECT DISTINCT agent_disposition
       FROM final_report
-      WHERE agent_disposition IS NOT NULL AND agent_disposition != ''
+      WHERE called_time BETWEEN ? AND ?
+        AND agent_disposition <> ''
       ORDER BY agent_disposition
     `;
 
-    const rows = await dbService.query(sql);
+    const rows = await dbService.query(sql, [from_ts, to_ts]);
 
     res.json({
       success: true,
@@ -1248,6 +1349,7 @@ app.get('/api/filters/agent-disposition', async (req, res) => {
   }
 });
 
+
 app.get('/api/reports/search', async (req, res) => {
   const requestId = Math.random().toString(36).substring(2, 10);
   
@@ -1256,7 +1358,6 @@ app.get('/api/reports/search', async (req, res) => {
     const {
       start, // start timestamp or date
       end, // end timestamp or date
-      call_id,
       contact_number,
       agent_name,
       extension,
@@ -1265,7 +1366,6 @@ app.get('/api/reports/search', async (req, res) => {
       agent_disposition,
       sub_disp_1,
       sub_disp_2,
-      sub_disp_3,
       status,
       campaign_type,
       country,
@@ -1322,51 +1422,22 @@ app.get('/api/reports/search', async (req, res) => {
       }
     }
     
+    // --- timezone-robust parsing (requires luxon) ---
+    const startEpoch = Math.floor(
+      DateTime.fromISO(start, { zone: 'Asia/Dubai' }).toUTC().toSeconds()
+    );
+    const endEpochExclusive = Math.floor(
+      DateTime.fromISO(end, { zone: 'Asia/Dubai' }).toUTC().toSeconds()
+    );
+
     // Build SQL query directly - use indexed fields and limit columns for better performance
-    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE ';
-    const values = [];
-    
-    // Add date range condition (using both timestamp and formatted date)
-    // Extract date parts for both start and end dates (DD/MM/YYYY)
-    const startDatePart = startDateFormatted.split(',')[0];
-    const endDatePart = endDateFormatted.split(',')[0];
-    
-    // Parse the dates to create a proper date range filter
-    const startDateObj = new Date(start);
-    const endDateObj = new Date(end);
-    
-    // Get all dates in the range
-    const dateConditions = [];
-    const currentDate = new Date(startDateObj);
-    
-    // Add a condition for each date in the range
-    while (currentDate <= endDateObj) {
-      const day = String(currentDate.getDate()).padStart(2, '0');
-      const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-      const year = currentDate.getFullYear();
-      const dateStr = `${day}/${month}/${year}`;
-      
-      dateConditions.push('called_time_formatted LIKE ?');
-      values.push(`${dateStr}%`);
-      
-      // Move to next day
-      currentDate.setDate(currentDate.getDate() + 1);
-    }
-    
-    // Combine all date conditions with OR
-    sql += `(${dateConditions.join(' OR ')})`;
-    
-    console.log(`SQL date condition: filtering for date range from ${startDatePart} to ${endDatePart}`);
+    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat, phone_number FROM final_report USE INDEX (idx_called_time) WHERE called_time >= ? AND called_time < ?';
+    const values = [startEpoch, endEpochExclusive];
     
     // Add optional filters
-    if (call_id) {
-      sql += ' AND call_id LIKE ?';
-      values.push(`%${call_id}%`);
-    }
-    
     if (contact_number) {
-      sql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
-      values.push(`%${contact_number}%`, `%${contact_number}%`);
+      sql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ? OR phone_number LIKE ?)';
+      values.push(`%${contact_number}%`, `%${contact_number}%`, `%${contact_number}%`);
     }
     
     if (agent_name) {
@@ -1397,11 +1468,6 @@ app.get('/api/reports/search', async (req, res) => {
     if (sub_disp_2) {
       sql += ' AND sub_disp_2 LIKE ?';
       values.push(`%${sub_disp_2}%`);
-    }
-    
-    if (sub_disp_3) {
-      sql += ' AND sub_disp_3 = ?';
-      values.push(sub_disp_3);
     }
     
     if (status) {
@@ -1446,8 +1512,8 @@ app.get('/api/reports/search', async (req, res) => {
       'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
       'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
       'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
-      'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
-      'status', 'campaign_type', 'abandoned', 'country', 'csat', 'created_at', 'updated_at'
+      'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2',
+      'status', 'campaign_type', 'abandoned', 'country', 'created_at', 'updated_at'
     ];
     
     const sortColumn = validSortColumns.includes(sort_by) ? sort_by : 'called_time';
@@ -1461,15 +1527,9 @@ app.get('/api/reports/search', async (req, res) => {
     console.log(`Request parameters: fetchAll=${fetchAll}, shouldFetchAll=${shouldFetchAll}`);
     
     // First, get the total count without pagination
-    let countSql = `SELECT COUNT(*) as total FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE `;
-    // Use the same date conditions for the count query
-    countSql += "(called_time_formatted >= ? AND called_time_formatted <= ?)";
-    let countValues = [...values.slice(0, dateConditions.length)];
+    let countSql = `SELECT COUNT(*) as total FROM final_report USE INDEX (idx_called_time) WHERE called_time >= ? AND called_time < ?`;
+    let countValues = [startEpoch, endEpochExclusive];
     
-    if (call_id) {
-      countSql += ' AND call_id LIKE ?';
-      countValues.push(`%${call_id}%`);
-    }
     if (contact_number) {
       countSql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
       countValues.push(`%${contact_number}%`, `%${contact_number}%`);
@@ -1497,10 +1557,6 @@ app.get('/api/reports/search', async (req, res) => {
     if (sub_disp_2) {
       countSql += ' AND sub_disp_2 LIKE ?';
       countValues.push(`%${sub_disp_2}%`);
-    }
-    if (sub_disp_3) {
-      countSql += ' AND sub_disp_3 = ?';
-      countValues.push(sub_disp_3);
     }
     if (status) {
       countSql += ' AND status LIKE ?';
@@ -1793,516 +1849,89 @@ app.post('/api/bla-hot-patch-transfer', async (req, res) => {
   }
 });
 
-// // Transfer Queue Report API endpoint
-// app.get('/api/reports/transfer-queue', async (req, res) => {
-//   const requestId = Math.random().toString(36).substring(2, 10);
-  
-//   try {
-//     // Extract query parameters
-//     const {
-//       start, // start timestamp or date
-//       end, // end timestamp or date
-//       contact_number,
-//       agent_name,
-//       extension,
-//       record_type,
-//       queue_extension,
-//       transfer_extension,
-//       sort_by = 'called_time',
-//       sort_order = 'desc',
-//       page,
-//       limit,
-//       fetchAll = 'false'
-//     } = req.query;
-    
-//     // Validate required parameters
-//     if (!start || !end) {
-//       return res.status(400).json({
-//         success: false,
-//         message: 'Missing required parameters: start and end dates are required',
-//         request_id: requestId
-//       });
-//     }
-    
-//     // Convert dates to appropriate format
-//     let startTimestamp, endTimestamp;
-//     let startDateFormatted, endDateFormatted;
-    
-//     // Handle start date conversion
-//     if (typeof start === 'string') {
-//       if (start.includes('-') || start.includes('/')) {
-//         // ISO format or date string
-//         const startDate = new Date(start);
-//         startTimestamp = Math.floor(startDate.getTime() / 1000);
-//         startDateFormatted = `${startDate.getDate().toString().padStart(2, '0')}/${(startDate.getMonth() + 1).toString().padStart(2, '0')}/${startDate.getFullYear()}`;
-//       } else {
-//         // Numeric string
-//         const numValue = Number(start);
-//         startTimestamp = numValue > 10000000000 ? Math.floor(numValue / 1000) : numValue;
-//         const startDate = new Date(startTimestamp * 1000);
-//         startDateFormatted = `${startDate.getDate().toString().padStart(2, '0')}/${(startDate.getMonth() + 1).toString().padStart(2, '0')}/${startDate.getFullYear()}`;
-//       }
-//     }
-    
-//     // Handle end date conversion
-//     if (typeof end === 'string') {
-//       if (end.includes('-') || end.includes('/')) {
-//         // ISO format or date string
-//         const endDate = new Date(end);
-//         endTimestamp = Math.ceil(endDate.getTime() / 1000);
-//         endDateFormatted = `${endDate.getDate().toString().padStart(2, '0')}/${(endDate.getMonth() + 1).toString().padStart(2, '0')}/${endDate.getFullYear()}`;
-//       } else {
-//         // Numeric string
-//         const numValue = Number(end);
-//         endTimestamp = numValue > 10000000000 ? Math.ceil(numValue / 1000) : numValue;
-//         const endDate = new Date(endTimestamp * 1000);
-//         endDateFormatted = `${endDate.getDate().toString().padStart(2, '0')}/${(endDate.getMonth() + 1).toString().padStart(2, '0')}/${endDate.getFullYear()}`;
-//       }
-//     }
-    
-//     // Build SQL query for transfer queue records only - optimized for performance
-//     let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report WHERE ';
-//     const values = [];
-    
-//     // **CRITICAL**: Start with transfer_queue_extension filter for better performance
-//     // Temporarily broaden the search to see what transfer data exists
-//     sql += '(transfer_queue_extension IS NOT NULL AND transfer_queue_extension != "") AND ';
-    
-//     // Add date range condition
-//     const startDateObj = new Date(start);
-//     const endDateObj = new Date(end);
-    
-//     // Get all dates in the range
-//     const dateConditions = [];
-//     const currentDate = new Date(startDateObj);
-    
-//     // Add a condition for each date in the range
-//     while (currentDate <= endDateObj) {
-//       const day = String(currentDate.getDate()).padStart(2, '0');
-//       const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-//       const year = currentDate.getFullYear();
-//       const dateStr = `${day}/${month}/${year}`;
-      
-//       dateConditions.push('called_time_formatted LIKE ?');
-//       values.push(`${dateStr}%`);
-      
-//       // Move to next day
-//       currentDate.setDate(currentDate.getDate() + 1);
-//     }
-    
-//     // Add date conditions to SQL
-//     if (dateConditions.length > 0) {
-//       sql += `(${dateConditions.join(' OR ')}) AND `;
-//     }
-    
-//     // Add other filter conditions
-//     if (contact_number) {
-//       sql += '(caller_id_number LIKE ? OR callee_id_number LIKE ?) AND ';
-//       values.push(`%${contact_number}%`, `%${contact_number}%`);
-//     }
-    
-//     if (agent_name) {
-//       sql += 'agent_name LIKE ? AND ';
-//       values.push(`%${agent_name}%`);
-//     }
-    
-//     if (extension) {
-//       sql += 'extension LIKE ? AND ';
-//       values.push(`%${extension}%`);
-//     }
-    
-//     if (record_type) {
-//       sql += 'record_type = ? AND ';
-//       values.push(record_type);
-//     }
-    
-//     if (queue_extension) {
-//       sql += 'transfer_queue_extension = ? AND ';
-//       values.push(queue_extension);
-//     }
-    
-//     if (transfer_extension) {
-//       sql += 'transfer_extension LIKE ? AND ';
-//       values.push(`%${transfer_extension}%`);
-//     }
-    
-//     // Remove trailing 'AND '
-//     sql = sql.replace(/AND\s*$/, '');
-    
-//     // Add ORDER BY clause
-//     const validSortColumns = ['called_time', 'called_time_formatted', 'agent_name', 'extension', 'record_type', 'transfer_queue_extension', 'transfer_extension'];
-//     const sortColumn = validSortColumns.includes(sort_by) ? sort_by : 'called_time';
-//     const sortDirection = sort_order.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
-//     sql += ` ORDER BY ${sortColumn} ${sortDirection}`;
-    
-//     // Add LIMIT if not fetching all
-//     const shouldFetchAll = fetchAll === 'true';
-//     if (!shouldFetchAll) {
-//       const pageNum = parseInt(page) || 1;
-//       const limitNum = parseInt(limit) || 1000;
-//       const offset = (pageNum - 1) * limitNum;
-//       sql += ` LIMIT ${limitNum} OFFSET ${offset}`;
-//     }
-    
-//     console.log(`🔄 [${requestId}] Transfer Queue Query:`, sql.substring(0, 200) + '...');
-//     console.log(`🔄 [${requestId}] Values:`, values.slice(0, 10));
-    
-//     // Debug: Check what transfer queue extensions exist in the database
-//     console.log(`🔍 [${requestId}] Checking transfer queue extensions in database...`);
-    
-//     const queryStartTime = Date.now();
-    
-//     // Execute the query with timeout
-//     let results, totalRecords;
-//     try {
-//       const connection = await pool.getConnection();
-      
-//       try {
-//         // Set query timeout to 30 seconds
-//         await connection.query('SET SESSION max_execution_time = 30000');
-        
-//         // First, let's check what transfer queue extensions exist in the database
-//         const [debugRows] = await connection.execute(
-//           'SELECT transfer_queue_extension, COUNT(*) as count FROM final_report WHERE transfer_queue_extension IS NOT NULL AND transfer_queue_extension != "" GROUP BY transfer_queue_extension ORDER BY count DESC LIMIT 10'
-//         );
-//         console.log(`🔍 [${requestId}] Transfer queue extensions found:`, debugRows);
-        
-//         // Check the dates of these transfer records
-//         const [dateRows] = await connection.execute(
-//           'SELECT called_time_formatted, transfer_queue_extension, transfer_extension, call_id FROM final_report WHERE transfer_queue_extension IS NOT NULL AND transfer_queue_extension != "" ORDER BY called_time DESC LIMIT 5'
-//         );
-//         console.log(`🔍 [${requestId}] Recent transfer queue records:`, dateRows);
-        
-//         // Execute main query
-//         const [rows] = await connection.execute(sql, values);
-//         results = rows;
-        
-//         // Get total count for transfer queue records (for pagination) - optimized
-//         let countSql = 'SELECT COUNT(*) as total FROM final_report WHERE (transfer_queue_extension IS NOT NULL AND transfer_queue_extension != "")';
-        
-//         // Add date conditions
-//         if (dateConditions.length > 0) {
-//           countSql += ` AND (${dateConditions.join(' OR ')})`;
-//         }
-        
-//         // Add the same filter conditions for count
-//         const countValues = [...values];
-//         if (contact_number) {
-//           countSql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ?)';
-//           countValues.push(`%${contact_number}%`, `%${contact_number}%`);
-//         }
-//         if (agent_name) {
-//           countSql += ' AND agent_name LIKE ?';
-//           countValues.push(`%${agent_name}%`);
-//         }
-//         if (extension) {
-//           countSql += ' AND extension LIKE ?';
-//           countValues.push(`%${extension}%`);
-//         }
-//         if (record_type) {
-//           countSql += ' AND record_type = ?';
-//           countValues.push(record_type);
-//         }
-//         if (queue_extension) {
-//           countSql += ' AND transfer_queue_extension = ?';
-//           countValues.push(queue_extension);
-//         }
-//         if (transfer_extension) {
-//           countSql += ' AND transfer_extension LIKE ?';
-//           countValues.push(`%${transfer_extension}%`);
-//         }
-        
-//         const [countRows] = await connection.execute(countSql, countValues);
-//         totalRecords = countRows[0].total;
-        
-//       } finally {
-//         connection.release();
-//       }
-//     } catch (error) {
-//       console.error(`❌ Query error: ${error.message}`);
-//       return res.status(504).json({ error: 'Query timeout or database error', details: error.message });
-//     }
-    
-//     const queryDuration = Date.now() - queryStartTime;
-    
-//     // Calculate totals for each record type (only transfer queue records)
-//     const totals = {
-//       Campaign: 0,
-//       Inbound: 0,
-//       Outbound: 0,
-//       Total: totalRecords
-//     };
-    
-//     results.forEach(record => {
-//       if (record.record_type && totals[record.record_type] !== undefined) {
-//         totals[record.record_type]++;
-//       }
-//     });
-    
-//     // Return the results with totals and pagination info
-//     return res.json({
-//       success: true,
-//       data: results,
-//       totals: totals,
-//       fetchAll: shouldFetchAll,
-//       query_time_ms: queryDuration,
-//       request_id: requestId,
-//       transfer_queue_only: true // Flag to indicate this is transfer queue data only
-//     });
-//   } catch (error) {
-//     // Determine appropriate status code based on error type
-//     let statusCode = 500;
-//     let errorMessage = 'Internal server error';
-//     let errorDetails = null;
-    
-//     // Handle validation errors
-//     if (error.message && error.message.includes('Missing required parameter')) {
-//       statusCode = 400;
-//       errorMessage = error.message;
-//     } 
-//     // Handle timeout errors
-//     else if (error.message && (error.message.includes('timeout') || error.message.includes('Query timeout'))) {
-//       statusCode = 504;
-//       errorMessage = 'Query timed out. Please try with a smaller date range or more specific filters.';
-//     }
-//     // Handle connection errors
-//     else if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'EPIPE' || error.code === 'EMFILE') {
-//       statusCode = 503;
-//       errorMessage = `Database connection error (${error.code}). Please try again in a few moments.`;
-//       errorDetails = { code: error.code };
-//     }
-//     // Handle database errors
-//     else if (error.code && error.code.startsWith('ER_')) {
-//       statusCode = 500;
-//       errorMessage = 'Database error. Please check your query parameters.';
-//       errorDetails = { code: error.code };
-//     }
-    
-//     // Send error response with request ID for tracking
-//     res.status(statusCode).json({ 
-//       error: errorMessage,
-//       request_id: requestId,
-//       ...(errorDetails && { details: errorDetails })
-//     });
-//   }
-// });
+app.post('/api/webhook/bla-hot-patch-transfer', async (req, res) => {
+ const requestId = Math.random().toString(36).substring(2, 10);
 
-// // Raw Recording Dump API endpoint
-// app.get('/api/recordings', async (req, res) => {
-//   const requestId = Math.random().toString(36).substring(2, 10);
-  
-//   try {
-//     console.log(`🎵 [${requestId}] Recordings API request:`, req.query);
-    
-//     // Extract query parameters
-//     const {
-//       startDate,
-//       endDate,
-//       contactNumber,
-//       callId,
-//       recordingId,
-//       page = '0',
-//       pageSize = '100'
-//     } = req.query;
-    
-//     // Build filters object for raw data fetching
-//     const rawFilters = {};
-    
-//     if (startDate) {
-//       rawFilters.startDate = parseInt(startDate);
-//     }
-    
-//     if (endDate) {
-//       rawFilters.endDate = parseInt(endDate);
-//     }
-    
-//     console.log(`🎵 [${requestId}] Fetching recordings from database with filters:`, rawFilters);
-    
-//     // Fetch recordings directly from database (they now have comma-separated recording IDs)
-//     let sql = 'SELECT * FROM recordings WHERE 1=1';
-//     const params = [];
-    
-//     if (rawFilters.startDate) {
-//       sql += ' AND called_time >= ?';
-//       params.push(rawFilters.startDate);
-//     }
-    
-//     if (rawFilters.endDate) {
-//       sql += ' AND called_time <= ?';
-//       params.push(rawFilters.endDate);
-//     }
-    
-//     if (contactNumber) {
-//       sql += ' AND (caller_id_number LIKE ? OR callee_id_number LIKE ? OR caller_id_name LIKE ? OR callee_id_name LIKE ?)';
-//       params.push(`%${contactNumber}%`, `%${contactNumber}%`, `%${contactNumber}%`, `%${contactNumber}%`);
-//     }
-    
-//     if (callId) {
-//       sql += ' AND call_id = ?';
-//       params.push(callId);
-//     }
-    
-//     if (recordingId) {
-//       sql += ' AND recording_id LIKE ?';
-//       params.push(`%${recordingId}%`);
-//     }
-    
-//     sql += ' ORDER BY called_time DESC';
-    
-//     const filteredRecordings = await dbService.query(sql, params);
-    
-//     // Apply pagination
-//     const pageNum = parseInt(page) || 0;
-//     const pageSizeNum = parseInt(pageSize) || 100;
-//     const startIndex = pageNum * pageSizeNum;
-//     const endIndex = startIndex + pageSizeNum;
-    
-//     const paginatedRecordings = filteredRecordings.slice(startIndex, endIndex);
-    
-//     // Get statistics
-//     const statistics = {
-//       uniqueCalls: filteredRecordings.length,
-//       totalRecordings: filteredRecordings.reduce((total, record) => {
-//         const recordingIds = record.recording_id ? record.recording_id.split(',') : [];
-//         return total + recordingIds.filter(id => id && id.trim() !== '').length;
-//       }, 0)
-//     };
-    
-//     console.log(`🎵 [${requestId}] Found ${filteredRecordings.length} recording records, returning ${paginatedRecordings.length} for page ${pageNum}`);
-    
-//     // Return the results
-//     res.json({
-//       success: true,
-//       recordings: paginatedRecordings,
-//       totalCount: filteredRecordings.length,
-//       totalProcessed: filteredRecordings.length,
-//       page: pageNum,
-//       pageSize: pageSizeNum,
-//       hasMore: endIndex < filteredRecordings.length,
-//       statistics: statistics,
-//       request_id: requestId
-//     });
-    
-//   } catch (error) {
-//     console.error(`❌ [${requestId}] Error fetching recordings:`, error);
-    
-//     // Determine appropriate status code
-//     let statusCode = 500;
-//     let errorMessage = 'Failed to fetch recordings';
-    
-//     if (error.message && error.message.includes('timeout')) {
-//       statusCode = 504;
-//       errorMessage = 'Request timed out. Please try with a smaller date range.';
-//     } else if (error.code && error.code.startsWith('ER_')) {
-//       statusCode = 500;
-//       errorMessage = 'Database error. Please check your query parameters.';
-//     }
-    
-//     res.status(statusCode).json({
-//       success: false,
-//       message: errorMessage,
-//       request_id: requestId
-//     });
-//   }
-// });
+ try {
+ console.log(`BLA HOT PATCH WEBHOOK: Starting transfer report generation (Request ID:${requestId})`);
 
-// // Process recordings from CDRs All data endpoint
-// app.post('/api/recordings/process', async (req, res) => {
-//   const requestId = Math.random().toString(36).substring(2, 10);
-  
-//   try {
-//     console.log(`🎵 [${requestId}] Processing recordings from CDRs All data...`);
-    
-//     // Extract date range from request body
-//     const { startDate, endDate } = req.body;
-    
-//     const filters = {};
-//     if (startDate) filters.startDate = startDate;
-//     if (endDate) filters.endDate = endDate;
-    
-//     // Process recordings from CDRs All data
-//     const result = await dbService.processRecordingsFromCdrsAll(filters);
-    
-//     console.log(`🎵 [${requestId}] Processing completed:`, result);
-    
-//     res.json({
-//       success: true,
-//       message: `Successfully processed ${result.recordingsProcessed} recordings`,
-//       recordingsProcessed: result.recordingsProcessed,
-//       request_id: requestId
-//     });
-    
-//   } catch (error) {
-//     console.error(`❌ [${requestId}] Error processing recordings:`, error);
-    
-//     res.status(500).json({
-//       success: false,
-//       message: 'Failed to process recordings',
-//       error: error.message,
-//       request_id: requestId
-//     });
-//   }
-// });
+ // Extract body parameters
+ const { startEpoch, endEpoch, webhook_url } = req.body;
 
-// // Export recordings to CSV endpoint
-// app.get('/api/recordings/export', async (req, res) => {
-//   const requestId = Math.random().toString(36).substring(2, 10);
-  
-//   try {
-//     console.log(`🎵 [${requestId}] Recordings CSV export request:`, req.query);
-    
-//     // Extract query parameters (same as regular recordings endpoint)
-//     const {
-//       startDate,
-//       endDate,
-//       callerIdNumber,
-//       calleeIdNumber,
-//       callId,
-//       recordingId,
-//     } = req.query;
-    
-//     // Build filters object for raw data fetching
-//     const rawFilters = {};
-//     if (startDate) rawFilters.startDate = parseInt(startDate);
-//     if (endDate) rawFilters.endDate = parseInt(endDate);
-    
-//     console.log(`🎵 [${requestId}] Exporting recordings with raw filters:`, rawFilters);
-    
-//     // Use recordingsFetcher to get processed recordings
-//     const processedRecordings = await recordingsFetcher.fetchAndProcessRecordings(rawFilters);
-    
-//     // Apply additional filters
-//     const additionalFilters = {};
-//     if (callerIdNumber) additionalFilters.callerIdNumber = callerIdNumber;
-//     if (calleeIdNumber) additionalFilters.calleeIdNumber = calleeIdNumber;
-//     if (callId) additionalFilters.callId = callId;
-//     if (recordingId) additionalFilters.recordingId = recordingId;
-    
-//     const filteredRecordings = recordingsFetcher.applyRecordingsFilters(processedRecordings, additionalFilters);
-    
-//     // Generate CSV content
-//     const csvContent = recordingsFetcher.exportRecordingsToCSV(filteredRecordings);
-    
-//     console.log(`🎵 [${requestId}] Generated CSV for ${filteredRecordings.length} recordings`);
-    
-//     // Set headers for CSV download
-//     const filename = `recordings_${new Date().toISOString().split('T')[0]}.csv`;
-//     res.setHeader('Content-Type', 'text/csv');
-//     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    
-//     // Send CSV content
-//     res.send(csvContent);
-    
-//   } catch (error) {
-//     console.error(`❌ [${requestId}] Error exporting recordings:`, error);
-    
-//     res.status(500).json({
-//       success: false,
-//       message: 'Failed to export recordings',
-//       request_id: requestId
-//     });
-//   }
-// });
+ // Validate required parameters
+ if (!startEpoch || !endEpoch) {
+ return res.status(400).json({
+ success: false,
+ message: 'Missing required parameters: startEpoch and endEpoch are required',
+ request_id: requestId
+ });
+ }
+
+ console.log(` BLA HOT PATCH WEBHOOK: Time range - Start:${startEpoch} (${new Date(startEpoch * 1000).toISOString()}), End: ${endEpoch} (${new Date(endEpoch * 1000).toISOString()})`);
+
+ // Generate the report
+ const reportResult = await generateBLAHotPatchTransferReport(pool, {
+ start: new Date(startEpoch * 1000).toISOString(),
+ end: new Date(endEpoch * 1000).toISOString()
+ });
+
+ if (!reportResult.success) {
+ console.error(`❌ BLA HOT PATCH WEBHOOK ERROR:${reportResult.error}`);
+ return res.status(500).json({
+ success: false,
+ message: 'Failed to generate BLA Hot Patch Transfer report',
+ error: reportResult.error,
+ request_id: requestId
+ });
+ }
+
+ console.log(`✅ BLA HOT PATCH WEBHOOK: Report generated successfully with${reportResult.data?.length || 0} records`);
+
+ // Prepare response data
+ const responseData = {
+ success: true,
+ message: 'BLA Hot Patch Transfer report generated successfully',
+ data: reportResult.data,
+ summary: reportResult.summary,
+ request_id: requestId,
+ timestamp: new Date().toISOString()
+ };
+
+ // Send webhook callback if webhook_url is provided
+ if (webhook_url) {
+ // Send webhook asynchronously (don't wait for it)
+ setImmediate(async () => {
+ try {
+ console.log(`🔔 Sending webhook callback to:${webhook_url}`);
+ await axios.post(webhook_url, responseData, {
+ headers: {
+ 'Content-Type': 'application/json',
+ 'X-Request-ID': requestId
+ },
+ timeout: 10000 // 10 second timeout
+ });
+ console.log(`✅ Webhook callback sent successfully to:${webhook_url}`);
+ } catch (webhookError) {
+ console.error(`❌ Failed to send webhook callback to${webhook_url}:`, webhookError.message);
+ // Don't fail the main request if webhook fails
+ }
+ });
+ }
+
+ // Return the report data
+ return res.json(responseData);
+
+ } catch (error) {
+ console.error(`❌ BLA HOT PATCH WEBHOOK CRITICAL ERROR (Request ID:${requestId}):`, error);
+
+ return res.status(500).json({
+ success: false,
+ message: 'Internal server error while generating BLA Hot Patch Transfer report',
+ error: error.message,
+ request_id: requestId
+ });
+ }
+});
 
 // Only use HTTPS if PUBLIC_URL starts with https://
 const useHTTPS = PUBLIC_URL.startsWith('https://');
@@ -2343,3 +1972,4 @@ if (sslOptions && useHTTPS) {
     process.exit(1);
   });
 }
+
