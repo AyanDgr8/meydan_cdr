@@ -193,7 +193,7 @@ async function updateMissingDispositionFields() {
         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
         AND (
           (
-            (JSON_EXTRACT(raw_data, '$.agent_disposition') IS NULL OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '')
+            (JSON_EXTRACT(raw_data, '$.agent_disposition') IS NULL OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '' OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '"AGENT NOT SUBMITTED"')
             AND COALESCE(disposition_retry_count, 0) < 14
           )
           OR (JSON_EXTRACT(raw_data, '$.follow_up_notes') IS NULL OR JSON_EXTRACT(raw_data, '$.follow_up_notes') = '')
@@ -221,45 +221,84 @@ async function updateMissingDispositionFields() {
       const callsToUpdateInFinalReport = [];
       
       for (const updatedCall of updatedCalls) {
+        const callId = updatedCall.call_id || updatedCall.callid;
+        
+        // Check if agent has submitted a real disposition
+        // Priority: If agent_disposition has a real value, use it (even if fonouc_disposition_render exists)
+        const hasRealDisposition = updatedCall.agent_disposition && 
+                                   updatedCall.agent_disposition !== '' &&
+                                   updatedCall.agent_disposition !== 'AGENT NOT SUBMITTED';
+        
+        // Only mark as "AGENT NOT SUBMITTED" if fonouc_disposition_render exists AND no real disposition
+        const isAgentNotSubmitted = updatedCall.fonouc_disposition_render && !hasRealDisposition;
+        
+        if (isAgentNotSubmitted) {
+          log(`  📋 ${callId}: Agent Not Submitted detected (fonouc_disposition_render present, no real disposition) - will update to "AGENT NOT SUBMITTED"`);
+          updatedCall.agent_disposition = 'AGENT NOT SUBMITTED';
+          updatedCall.agent_subdisposition = null;
+          // Force clear follow-up notes even if they exist in API response
+          updatedCall.follow_up_notes = null;
+        }
+        
         // Check if call has new disposition or follow-up notes information
         const hasDisposition = updatedCall.agent_disposition && updatedCall.agent_disposition !== '';
         const hasFollowUpNotes = updatedCall.follow_up_notes && updatedCall.follow_up_notes !== '';
         
-        const callId = updatedCall.call_id || updatedCall.callid;
+        // Process if there's any disposition (including "AGENT NOT SUBMITTED") or follow-up notes
+        const shouldUpdate = hasDisposition || hasFollowUpNotes;
         
         // Find the original record to get current retry count
         const originalRecord = missingRecords.find(r => r.callid === callId);
         const currentRetryCount = originalRecord ? originalRecord.retry_count : 0;
         
-        if (hasDisposition || hasFollowUpNotes) {
+        if (shouldUpdate) {
           try {
-            // Update raw table - reset retry counter if disposition is found
+            // Determine if we should reset or increment retry counter
+            // Reset to 0 only if a real disposition is found (not "AGENT NOT SUBMITTED")
+            // Increment if it's still "AGENT NOT SUBMITTED" or blank
+            const isStillAgentNotSubmitted = updatedCall.agent_disposition === 'AGENT NOT SUBMITTED' || !hasRealDisposition;
+            const newRetryCount = isStillAgentNotSubmitted ? currentRetryCount + 1 : 0;
+            
+            // Update raw table
             const updateQuery = `
               UPDATE ${table.name} 
               SET raw_data = ?, 
-                  disposition_retry_count = 0,
+                  disposition_retry_count = ?,
                   updated_at = NOW() 
               WHERE ${idField} = ?
             `;
             
             await dbService.query(updateQuery, [
               JSON.stringify(updatedCall),
+              newRetryCount,
               callId
             ]);
             
             // Track calls that need final_report update
-            callsToUpdateInFinalReport.push({
-              callId: callId,
-              agent_disposition: updatedCall.agent_disposition,
-              agent_subdisposition: updatedCall.agent_subdisposition,
-              follow_up_notes: updatedCall.follow_up_notes
-            });
+            // Update if real disposition OR if "AGENT NOT SUBMITTED" (to clear follow-up notes)
+            if (hasRealDisposition || updatedCall.agent_disposition === 'AGENT NOT SUBMITTED') {
+              callsToUpdateInFinalReport.push({
+                callId: callId,
+                agent_disposition: updatedCall.agent_disposition,
+                agent_subdisposition: updatedCall.agent_subdisposition,
+                follow_up_notes: updatedCall.follow_up_notes
+              });
+            }
             
             updatedCount++;
             const dispositionInfo = hasDisposition ? `agent_disposition = "${updatedCall.agent_disposition}"` : '';
             const followUpInfo = hasFollowUpNotes ? `follow_up_notes = "${updatedCall.follow_up_notes}"` : '';
             const updateInfo = [dispositionInfo, followUpInfo].filter(info => info).join(', ');
-            log(`  ✅ Updated ${callId}: ${updateInfo} (retry count reset to 0)`);
+            
+            if (isStillAgentNotSubmitted) {
+              if (newRetryCount >= 14) {
+                log(`  ⚠️ ${callId}: Still "AGENT NOT SUBMITTED" after ${newRetryCount} attempts - will stop retrying`);
+              } else {
+                log(`  🔄 ${callId}: ${updateInfo} (retry count: ${newRetryCount}/14 - will continue checking)`);
+              }
+            } else {
+              log(`  ✅ Updated ${callId}: ${updateInfo} (retry count reset to 0)`);
+            }
           } catch (updateError) {
             log(`  ❌ Failed to update ${updatedCall.call_id || updatedCall.callid}: ${updateError.message}`, 'error');
           }
@@ -320,12 +359,16 @@ async function updateFinalReportDispositions(callsToUpdate) {
         const agentDisposition = call.agent_disposition || '';
         const followUpNotes = call.follow_up_notes || '';
         
+        // If "AGENT NOT SUBMITTED", ensure all related fields are cleared
+        const isAgentNotSubmitted = agentDisposition === 'AGENT NOT SUBMITTED';
+        
         // Extract nested subdispositions properly
         let subDisp1 = '';
         let subDisp2 = '';
         let subDisp3 = '';
         
-        if (call.agent_subdisposition) {
+        // Only extract subdispositions if NOT "AGENT NOT SUBMITTED"
+        if (call.agent_subdisposition && !isAgentNotSubmitted) {
           if (typeof call.agent_subdisposition === 'object' && call.agent_subdisposition.name) {
             subDisp1 = call.agent_subdisposition.name;
             if (call.agent_subdisposition.subdisposition && call.agent_subdisposition.subdisposition.name) {
@@ -348,14 +391,21 @@ async function updateFinalReportDispositions(callsToUpdate) {
           values.push(agentDisposition);
         }
         
-        if (subDisp1 || subDisp2 || subDisp3) {
-          fieldsToUpdate.push('sub_disp_1 = ?', 'sub_disp_2 = ?', 'sub_disp_3 = ?');
-          values.push(subDisp1, subDisp2, subDisp3);
-        }
-        
-        if (followUpNotes) {
-          fieldsToUpdate.push('follow_up_notes = ?');
-          values.push(followUpNotes);
+        // If "AGENT NOT SUBMITTED", explicitly clear sub-dispositions and follow-up notes
+        if (isAgentNotSubmitted) {
+          fieldsToUpdate.push('sub_disp_1 = ?', 'sub_disp_2 = ?', 'sub_disp_3 = ?', 'follow_up_notes = ?');
+          values.push(null, null, null, null);
+        } else {
+          // Only update sub-dispositions and follow-up notes if NOT "AGENT NOT SUBMITTED"
+          if (subDisp1 || subDisp2 || subDisp3) {
+            fieldsToUpdate.push('sub_disp_1 = ?', 'sub_disp_2 = ?', 'sub_disp_3 = ?');
+            values.push(subDisp1, subDisp2, subDisp3);
+          }
+          
+          if (followUpNotes) {
+            fieldsToUpdate.push('follow_up_notes = ?');
+            values.push(followUpNotes);
+          }
         }
         
         if (fieldsToUpdate.length > 0) {

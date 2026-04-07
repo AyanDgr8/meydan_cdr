@@ -972,7 +972,7 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     const endEpochExclusive = Math.ceil(DateTime.fromISO(end, { zone: 'Asia/Dubai' }).toUTC().toSeconds());
     console.log(`Date range: ${start} to ${end} (epoch: ${startEpoch} to ${endEpochExclusive})`);
 
-    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, status, campaign_type, abandoned, country, follow_up_notes, agent_history, queue_history, lead_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time) WHERE called_time >= ? AND called_time < ?';
+    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, connected_agent_ring_time, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, status, campaign_type, abandoned, country, follow_up_notes, agent_history, queue_history, lead_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time) WHERE called_time >= ? AND called_time < ?';
     const values = [startEpoch, endEpochExclusive];
     
     // Add optional filters
@@ -1323,7 +1323,7 @@ app.get('/api/reports/search', async (req, res) => {
     }
     
     // Build SQL query directly - use indexed fields and limit columns for better performance
-    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE ';
+    let sql = 'SELECT call_id, record_type, type, agent_name, extension, queue_campaign_name, called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number, connected_agent_ring_time, answered_time, hangup_time, wait_duration, talk_duration, hold_duration, agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3, follow_up_notes, status, campaign_type, abandoned, country, queue_history, agent_history, recording, transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat FROM final_report USE INDEX (idx_called_time, idx_called_time_formatted) WHERE ';
     const values = [];
     
     // Add date range condition (using both timestamp and formatted date)

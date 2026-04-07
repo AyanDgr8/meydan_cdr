@@ -270,7 +270,7 @@ async function loadAgentDispositionDropdown(fromTs, toTs) {
       opt.value = value;
       opt.textContent = value;
 
-      // ðŸ”‘ Restore selection if it existed
+      // Restore selection if it existed
       if (value === selectedValue) {
         opt.selected = true;
       }
@@ -328,6 +328,7 @@ function createTableHeaders() {
     'Called Time (dd:mm:yyyy, hh:mm:ss)',
     'Caller ID Number',
     'Callee ID Number',
+    'Connected Agent Ring Time',
     'Answered Time (dd:mm:yyyy, hh:mm:ss)',
     'Hangup Time (dd:mm:yyyy, hh:mm:ss)',
     'Wait Duration (hh:mm:ss)',
@@ -459,6 +460,7 @@ function createTableRows(data) {
         (typeof row.called_time === 'string' && row.called_time.includes('/') ? row.called_time : formatDate(row.called_time)),
       row.caller_id_number || '',
       row.callee_id_number || '',
+      row.connected_agent_ring_time || '',
       // Handle answered_time - use string directly or empty string for null
       row.answered_time ? 
         (typeof row.answered_time === 'string' && row.answered_time.includes('/') ? 
@@ -1404,6 +1406,7 @@ function appendTableRows(tbody, rows, startIndex = 0) {
       { value: formatDate(row.called_time, row.called_time_formatted), isHTML: false },
       { value: row.caller_id_number, isHTML: false },
       { value: row.callee_id_number, isHTML: false },
+      { value: row.connected_agent_ring_time || '', isHTML: false },
       { value: (row.answered_time_formatted && row.answered_time_formatted !== 'undefined') ? row.answered_time_formatted : (row.answered_time === null ? '' : row.answered_time), isHTML: false },
       { value: (row.hangup_time_formatted && row.hangup_time_formatted !== 'undefined') ? row.hangup_time_formatted : (row.hangup_time === null ? '' : row.hangup_time), isHTML: false },
       { value: (row.wait_duration_formatted && row.wait_duration_formatted !== 'undefined') ? row.wait_duration_formatted : (row.wait_duration === null ? '' : row.wait_duration), isHTML: false },
@@ -2209,6 +2212,7 @@ function generateCSV() {
     'Called Time',
     'Caller ID Number',
     'Callee ID Number',
+    'Connected Agent Ring Time',
     'Answered Time ',
     'Hangup Time',
     'Wait Duration ',
@@ -2273,6 +2277,7 @@ function generateCSV() {
         `"${formatDate(row.called_time, row.called_time_formatted)}"`,
         `"${(row.caller_id_number || '').replace(/"/g, '""')}"`,
         `"${(row.callee_id_number || '').replace(/"/g, '""')}"`,
+        `"${(row.connected_agent_ring_time || '').replace(/"/g, '""')}"`,
         `"${(row.answered_time_formatted && row.answered_time_formatted !== 'undefined') ? row.answered_time_formatted : formatDate(row.answered_time)}"`,
         `"${(row.hangup_time_formatted && row.hangup_time_formatted !== 'undefined') ? row.hangup_time_formatted : formatDate(row.hangup_time)}"`,
         `"${(row.wait_duration_formatted && row.wait_duration_formatted !== 'undefined') ? row.wait_duration_formatted : formatDuration(row.wait_duration)}"`,

@@ -283,6 +283,7 @@ async function insertBatch(batch) {
       record.caller_id_number || null,
       record.caller_id_name || null,
       record.callee_id_number || null,
+      record.connected_agent_ring_time || null,
       record.answered_time || null,
       record.hangup_time || null,
       record.wait_duration || null,
@@ -310,7 +311,7 @@ async function insertBatch(batch) {
   const columns = [
     'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
     'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
-    'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
+    'connected_agent_ring_time', 'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
     'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
     'status', 'campaign_type', 'abandoned', 'country', 'follow_up_notes',
     'agent_history', 'queue_history', 'lead_history', 'recording'
@@ -323,7 +324,7 @@ async function insertBatch(batch) {
     INSERT INTO final_report (
       call_id, record_type, type, agent_name, extension, queue_campaign_name, 
       called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number,
-      answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
+      connected_agent_ring_time, answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
       agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3,
       status, campaign_type, abandoned, country, follow_up_notes,
       agent_history, queue_history, lead_history, recording

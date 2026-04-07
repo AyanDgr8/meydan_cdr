@@ -29,6 +29,53 @@ import { fileURLToPath } from 'url';
 // Removed import for deleted comprehensiveDataFetcher.js
 
 /**
+ * Helper function to calculate connected agent ring time from agent history
+ * Ring time = agent_enter timestamp - dial timestamp for the same agent
+ * @param {Array} agentHistory - Array of agent history events
+ * @returns {string} - Ring time formatted as hh:mm:ss or empty string
+ */
+function calculateConnectedAgentRingTime(agentHistory) {
+  if (!Array.isArray(agentHistory) || agentHistory.length === 0) {
+    return '';
+  }
+  
+  // Find the agent who has "agent_enter" event (the connected agent)
+  const agentEnterEvent = agentHistory.find(entry => entry.event === 'agent_enter');
+  if (!agentEnterEvent) {
+    return '';
+  }
+  
+  // Find the matching "dial" event for the same agent (by ext or name)
+  const agentExt = agentEnterEvent.ext;
+  const agentFirstName = agentEnterEvent.first_name;
+  const agentLastName = agentEnterEvent.last_name;
+  
+  const dialEvent = agentHistory.find(entry => 
+    (entry.event === 'dial' || entry.event === 'dialing') && 
+    (entry.ext === agentExt || 
+     (entry.first_name === agentFirstName && entry.last_name === agentLastName))
+  );
+  
+  if (!dialEvent || !dialEvent.last_attempt || !agentEnterEvent.last_attempt) {
+    return '';
+  }
+  
+  // Calculate ring time in seconds
+  const ringTimeSeconds = agentEnterEvent.last_attempt - dialEvent.last_attempt;
+  
+  if (ringTimeSeconds < 0) {
+    return '';
+  }
+  
+  // Format as hh:mm:ss
+  const hours = Math.floor(ringTimeSeconds / 3600);
+  const minutes = Math.floor((ringTimeSeconds % 3600) / 60);
+  const seconds = Math.floor(ringTimeSeconds % 60);
+  
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+/**
  * Helper function to calculate hold duration from agent history
  * @param {Array} agentHistory - Array of agent history events
  * @param {number|string} hangupTime - Call hangup time
@@ -885,10 +932,23 @@ function processCDRRecord(record) {
   // Agent and call details
   processed['Agent Hangup'] = record.agent_hangup || 'No';
   processed['Status'] = record.hangup_cause || record.status || '';
-  processed['Agent Disposition'] = record.agent_disposition || '';
-  processed.Sub_disp_1 = record.sub_disp_1 || record.sub_disposition_1 || '';
-  processed.Sub_disp_2 = record.sub_disp_2 || record.sub_disposition_2 || '';
-  processed.Sub_disp_3 = record.sub_disp_3 || record.sub_disposition_3 || '';
+  
+  // Check if there's a real disposition (prioritize over fonouc_disposition_render)
+  const hasRealDisposition = record.agent_disposition && 
+                             record.agent_disposition !== '' && 
+                             record.agent_disposition !== 'AGENT NOT SUBMITTED';
+  
+  if (record.fonouc_disposition_render && !hasRealDisposition) {
+    processed['Agent Disposition'] = 'AGENT NOT SUBMITTED';
+    processed.Sub_disp_1 = '';
+    processed.Sub_disp_2 = '';
+    processed.Sub_disp_3 = '';
+  } else {
+    processed['Agent Disposition'] = record.agent_disposition || '';
+    processed.Sub_disp_1 = record.sub_disp_1 || record.sub_disposition_1 || '';
+    processed.Sub_disp_2 = record.sub_disp_2 || record.sub_disposition_2 || '';
+    processed.Sub_disp_3 = record.sub_disp_3 || record.sub_disposition_3 || '';
+  }
   
   // Additional fields
   // Extract follow_up_notes directly from the response data
@@ -2117,38 +2177,56 @@ export function processRecordData(record, reportType, cdrAllRecords = []) {
     } else {
       record['Hold Duration'] = record.hold_duration ? formatDuration(record.hold_duration) : '';
     }
-    record['Agent Disposition'] = record.agent_disposition || '';
     
-    // Handle subdispositions (including third level)
-    if (record.agent_subdisposition) {
-      if (typeof record.agent_subdisposition === 'object' && record.agent_subdisposition.name) {
-        record['Sub_disp_1'] = record.agent_subdisposition.name;
-        if (record.agent_subdisposition.subdisposition && record.agent_subdisposition.subdisposition.name) {
-          record['Sub_disp_2'] = record.agent_subdisposition.subdisposition.name;
-          // Extract third level subdisposition (e.g., "Not Resolved" / "Resolved")
-          if (record.agent_subdisposition.subdisposition.subdisposition && record.agent_subdisposition.subdisposition.subdisposition.name) {
-            record['Sub_disp_3'] = record.agent_subdisposition.subdisposition.subdisposition.name;
+    // Calculate connected agent ring time from agent_history
+    record.connected_agent_ring_time = calculateConnectedAgentRingTime(record.agent_history);
+    record['Connected Agent Ring Time'] = record.connected_agent_ring_time;
+    
+    // Check if there's a real disposition (prioritize over fonouc_disposition_render)
+    const hasRealDisposition = record.agent_disposition && 
+                               record.agent_disposition !== '' && 
+                               record.agent_disposition !== 'AGENT NOT SUBMITTED';
+    
+    if (record.fonouc_disposition_render && !hasRealDisposition) {
+      record['Agent Disposition'] = 'AGENT NOT SUBMITTED';
+      record['Sub_disp_1'] = '';
+      record['Sub_disp_2'] = '';
+      record['Sub_disp_3'] = '';
+      record['Follow up notes'] = '';
+    } else {
+      record['Agent Disposition'] = record.agent_disposition || '';
+
+      // Handle subdispositions (including third level)
+      if (record.agent_subdisposition) {
+        if (typeof record.agent_subdisposition === 'object' && record.agent_subdisposition.name) {
+          record['Sub_disp_1'] = record.agent_subdisposition.name;
+          if (record.agent_subdisposition.subdisposition && record.agent_subdisposition.subdisposition.name) {
+            record['Sub_disp_2'] = record.agent_subdisposition.subdisposition.name;
+            // Extract third level subdisposition (e.g., "Not Resolved" / "Resolved")
+            if (record.agent_subdisposition.subdisposition.subdisposition && record.agent_subdisposition.subdisposition.subdisposition.name) {
+              record['Sub_disp_3'] = record.agent_subdisposition.subdisposition.subdisposition.name;
+            } else {
+              record['Sub_disp_3'] = '';
+            }
           } else {
+            record['Sub_disp_2'] = '';
             record['Sub_disp_3'] = '';
           }
         } else {
+          record['Sub_disp_1'] = record.agent_subdisposition.toString();
           record['Sub_disp_2'] = '';
           record['Sub_disp_3'] = '';
         }
       } else {
-        record['Sub_disp_1'] = record.agent_subdisposition.toString();
+        record['Sub_disp_1'] = '';
         record['Sub_disp_2'] = '';
         record['Sub_disp_3'] = '';
       }
-    } else {
-      record['Sub_disp_1'] = '';
-      record['Sub_disp_2'] = '';
-      record['Sub_disp_3'] = '';
+
+      // Extract follow_up_notes directly from the response
+      const followUpNotesQueue = record.follow_up_notes || '';
+      record['Follow up notes'] = followUpNotesQueue;
     }
-    
-    // Extract follow_up_notes directly from the response
-    const followUpNotesQueue = record.follow_up_notes || '';
-    record['Follow up notes'] = followUpNotesQueue;
     
     // Add System Disposition based on call type, directly from API response
     if (reportType === 'queueCalls') {
@@ -2183,9 +2261,13 @@ export function processRecordData(record, reportType, cdrAllRecords = []) {
       record['Caller ID Number'] = agentExtension;
       record['Caller ID / Lead Name'] = record.caller_id_name || '';
       record['Callee ID / Lead number'] = customerNumber;
-    } else if (reportType === 'campaignsActivity') {
+    }
+  }
+
+  // Map all required fields for campaign records
+  if (reportType === 'campaignsActivity') {
       // Debug: Log campaign record structure
-      console.log('ðŸ” Campaign record keys:', Object.keys(record));
+      console.log('ðŸ" Campaign record keys:', Object.keys(record));
 
 
       // Campaign-specific field mappings with fallbacks
@@ -2223,33 +2305,52 @@ export function processRecordData(record, reportType, cdrAllRecords = []) {
       } else {
         record['Hold Duration'] = record.hold_duration ? formatDuration(record.hold_duration) : '';
       }
+      
+      // Calculate connected agent ring time from agent_history
+      record.connected_agent_ring_time = calculateConnectedAgentRingTime(record.agent_history);
+      record['Connected Agent Ring Time'] = record.connected_agent_ring_time;
+      
       record['Agent Hangup'] = 'No'; // Default for campaigns
-      record['Agent Disposition'] = agentDisposition;
       record['System Disposition'] = systemDisposition;
-      // Handle subdisposition formatting properly (including third level)
-      if (record.agent_subdisposition) {
-        if (typeof record.agent_subdisposition === 'object' && record.agent_subdisposition.name) {
-          record['Sub_disp_1'] = record.agent_subdisposition.name;
-          record['Sub_disp_2'] = record.agent_subdisposition.subdisposition?.name ?? '';
-          // Extract third level subdisposition (e.g., "Not Resolved" / "Resolved")
-          record['Sub_disp_3'] = record.agent_subdisposition.subdisposition?.subdisposition?.name ?? '';
-        } else if (typeof record.agent_subdisposition === 'string') {
-          record['Sub_disp_1'] = record.agent_subdisposition;
-          record['Sub_disp_2'] = '';
-          record['Sub_disp_3'] = '';
+      
+      // Check if there's a real disposition (prioritize over fonouc_disposition_render)
+      const hasRealDisposition = agentDisposition && 
+                                 agentDisposition !== '' && 
+                                 agentDisposition !== 'AGENT NOT SUBMITTED';
+      
+      if (record.fonouc_disposition_render && !hasRealDisposition) {
+        record['Agent Disposition'] = 'AGENT NOT SUBMITTED';
+        record['Sub_disp_1'] = '';
+        record['Sub_disp_2'] = '';
+        record['Sub_disp_3'] = '';
+        record['Follow up notes'] = '';
+      } else {
+        record['Agent Disposition'] = agentDisposition;
+        // Handle subdisposition formatting properly (including third level)
+        if (record.agent_subdisposition) {
+          if (typeof record.agent_subdisposition === 'object' && record.agent_subdisposition.name) {
+            record['Sub_disp_1'] = record.agent_subdisposition.name;
+            record['Sub_disp_2'] = record.agent_subdisposition.subdisposition?.name ?? '';
+            // Extract third level subdisposition (e.g., "Not Resolved" / "Resolved")
+            record['Sub_disp_3'] = record.agent_subdisposition.subdisposition?.subdisposition?.name ?? '';
+          } else if (typeof record.agent_subdisposition === 'string') {
+            record['Sub_disp_1'] = record.agent_subdisposition;
+            record['Sub_disp_2'] = '';
+            record['Sub_disp_3'] = '';
+          } else {
+            record['Sub_disp_1'] = '';
+            record['Sub_disp_2'] = '';
+            record['Sub_disp_3'] = '';
+          }
         } else {
           record['Sub_disp_1'] = '';
           record['Sub_disp_2'] = '';
           record['Sub_disp_3'] = '';
         }
-      } else {
-        record['Sub_disp_1'] = '';
-        record['Sub_disp_2'] = '';
-        record['Sub_disp_3'] = '';
+        // Extract follow_up_notes directly from the response
+        const followUpNotesCampaign = record.follow_up_notes || '';
+        record['Follow up notes'] = followUpNotesCampaign;
       }
-      // Extract follow_up_notes directly from the response
-      const followUpNotesCampaign = record.follow_up_notes || '';
-      record['Follow up notes'] = followUpNotesCampaign;
       record['Abandoned'] = 'No'; // Default for campaigns
       record['Agent History'] = historyToHtml(record.agent_history || []);
       record['Queue History'] = historyToHtml(record.lead_history || []);
@@ -2268,7 +2369,6 @@ export function processRecordData(record, reportType, cdrAllRecords = []) {
         'Status': record['Status'],
         'Campaign Type': record['Campaign Type']
       });
-    }
   }
 
   // Set the Type field based on report type

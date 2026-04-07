@@ -235,3 +235,9 @@ CREATE TABLE IF NOT EXISTS recordings (
     INDEX idx_called_time_call_id (called_time, call_id)
 );
 
+
+
+-- new column 
+ALTER TABLE final_report 
+ADD COLUMN connected_agent_ring_time VARCHAR(30) DEFAULT NULL 
+AFTER callee_id_number;

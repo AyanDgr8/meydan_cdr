@@ -4,30 +4,30 @@
 
 import dbService from './dbService.js';
 import { createUnifiedReportFromDB, processRecordData } from './reportFetcher.js';
-import { sendCSATEmail } from './mail.js';
+// import { sendCSATEmail } from './mail.js';
 
-// Track call IDs for which CSAT emails have already been sent (persists across populate cycles)
-const csatEmailSentIds = new Set();
-let csatIdsLoaded = false;
+// // Track call IDs for which CSAT emails have already been sent (persists across populate cycles)
+// const csatEmailSentIds = new Set();
+// let csatIdsLoaded = false;
 
-/**
- * Load existing CSAT call IDs from the database so we don't re-send emails on server restart
- */
-async function loadExistingCSATIds() {
-  if (csatIdsLoaded) return;
-  try {
-    const rows = await dbService.query(
-      "SELECT call_id FROM final_report WHERE csat IS NOT NULL AND csat != ''"
-    );
-    if (Array.isArray(rows)) {
-      rows.forEach(r => { if (r.call_id) csatEmailSentIds.add(r.call_id); });
-    }
-    csatIdsLoaded = true;
-    console.log(`📧 Loaded ${csatEmailSentIds.size} existing CSAT call IDs (emails will not be re-sent for these)`);
-  } catch (err) {
-    console.error('❌ Failed to load existing CSAT IDs:', err.message);
-  }
-}
+// /**
+//  * Load existing CSAT call IDs from the database so we don't re-send emails on server restart
+//  */
+// async function loadExistingCSATIds() {
+//   if (csatIdsLoaded) return;
+//   try {
+//     const rows = await dbService.query(
+//       "SELECT call_id FROM final_report WHERE csat IS NOT NULL AND csat != ''"
+//     );
+//     if (Array.isArray(rows)) {
+//       rows.forEach(r => { if (r.call_id) csatEmailSentIds.add(r.call_id); });
+//     }
+//     csatIdsLoaded = true;
+//     console.log(`📧 Loaded ${csatEmailSentIds.size} existing CSAT call IDs (emails will not be re-sent for these)`);
+//   } catch (err) {
+//     console.error('❌ Failed to load existing CSAT IDs:', err.message);
+//   }
+// }
 
 /**
  * Format timestamp to local time string
@@ -176,32 +176,32 @@ async function insertIntoFinalReport(records) {
     // Continue with insertion of all records if checking fails
   }
   
-  // Load existing CSAT call IDs from DB on first run (prevents re-sending after restart)
-  await loadExistingCSATIds();
+  // // Load existing CSAT call IDs from DB on first run (prevents re-sending after restart)
+  // await loadExistingCSATIds();
 
-  // Send CSAT email notifications only for records we haven't emailed yet
-  for (const record of newRecords) {
-    const csat = record.CSAT || null;
-    const callId = record.call_id || record.callid || '';
-    if (csat && callId && !csatEmailSentIds.has(callId)) {
-      csatEmailSentIds.add(callId);
-      let agentName = record['Agent name'] || record.agent_name || '';
-      if (!agentName && Array.isArray(record.agent_history)) {
-        const agentEvt = record.agent_history.find(e => e && (e.event === 'agent_answer' || e.event === 'agent_enter'));
-        if (agentEvt) {
-          agentName = `${agentEvt.first_name ?? ''} ${agentEvt.last_name ?? ''}`.trim();
-        }
-      }
-      sendCSATEmail({
-        agentName,
-        extension: record.Extension || record.extension || '',
-        callerIdNumber: record['Caller ID Number'] || record.caller_id_number || '',
-        calleeIdNumber: record['Callee ID / Lead number'] || record.callee_id_number || '',
-        csat,
-        callId,
-      }).catch(() => {});
-    }
-  }
+  // // Send CSAT email notifications only for records we haven't emailed yet
+  // for (const record of newRecords) {
+  //   const csat = record.CSAT || null;
+  //   const callId = record.call_id || record.callid || '';
+  //   if (csat && callId && !csatEmailSentIds.has(callId)) {
+  //     csatEmailSentIds.add(callId);
+  //     let agentName = record['Agent name'] || record.agent_name || '';
+  //     if (!agentName && Array.isArray(record.agent_history)) {
+  //       const agentEvt = record.agent_history.find(e => e && (e.event === 'agent_answer' || e.event === 'agent_enter'));
+  //       if (agentEvt) {
+  //         agentName = `${agentEvt.first_name ?? ''} ${agentEvt.last_name ?? ''}`.trim();
+  //       }
+  //     }
+  //     sendCSATEmail({
+  //       agentName,
+  //       extension: record.Extension || record.extension || '',
+  //       callerIdNumber: record['Caller ID Number'] || record.caller_id_number || '',
+  //       calleeIdNumber: record['Callee ID / Lead number'] || record.callee_id_number || '',
+  //       csat,
+  //       callId,
+  //     }).catch(() => {});
+  //   }
+  // }
 
   // Insert records in batches
   const BATCH_SIZE = 100;
@@ -312,17 +312,18 @@ async function insertBatch(batch) {
       record['Caller ID Number'] || record.caller_id_number || null,
       record['Caller ID / Lead Name'] || record.caller_id_name || null,
       record['Callee ID / Lead number'] || record.callee_id_number || null,
+      record['Connected Agent Ring Time'] || record.connected_agent_ring_time || null,
       record['Answered time'] || null,
       record['Hangup time'] || null,
       record['Wait Duration'] || null,
       record['Talk Duration'] || null,
       record['Hold Duration'] || null,
       record['Agent Hangup'] || null,
-      record['Agent Disposition'] || null,
+      record['Agent Disposition'] !== undefined ? record['Agent Disposition'] : null,
       record['Disposition'] || record['System Disposition'] || null,
-      record['Sub_disp_1'] || record['Sub Disp 1'] || null,
-      record['Sub_disp_2'] || record['Sub Disp 2'] || null,
-      record['Sub_disp_3'] || record['Sub Disp 3'] || null,
+      record['Sub_disp_1'] !== undefined ? record['Sub_disp_1'] : (record['Sub Disp 1'] || null),
+      record['Sub_disp_2'] !== undefined ? record['Sub_disp_2'] : (record['Sub Disp 2'] || null),
+      record['Sub_disp_3'] !== undefined ? record['Sub_disp_3'] : (record['Sub Disp 3'] || null),
       record.Status || null,
       record['Campaign Type'] || null,
       record.Abandoned || null,
@@ -346,7 +347,7 @@ async function insertBatch(batch) {
   const columns = [
     'call_id', 'record_type', 'type', 'agent_name', 'extension', 'queue_campaign_name',
     'called_time', 'called_time_formatted', 'caller_id_number', 'caller_id_name', 'callee_id_number',
-    'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
+    'connected_agent_ring_time', 'answered_time', 'hangup_time', 'wait_duration', 'talk_duration', 'hold_duration',
     'agent_hangup', 'agent_disposition', 'disposition', 'sub_disp_1', 'sub_disp_2', 'sub_disp_3',
     'status', 'campaign_type', 'abandoned', 'country', 'follow_up_notes',
     'agent_history', 'queue_history', 'lead_history', 'recording',
@@ -368,7 +369,7 @@ async function insertBatch(batch) {
     INSERT IGNORE INTO final_report (
       call_id, record_type, type, agent_name, extension, queue_campaign_name, 
       called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number,
-      answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
+      connected_agent_ring_time, answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
       agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3,
       status, campaign_type, abandoned, country, follow_up_notes,
       agent_history, queue_history, lead_history, recording,
@@ -397,12 +398,12 @@ async function insertBatch(batch) {
           INSERT IGNORE INTO final_report (
             call_id, record_type, type, agent_name, extension, queue_campaign_name, 
             called_time, called_time_formatted, caller_id_number, caller_id_name, callee_id_number,
-            answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
+            connected_agent_ring_time, answered_time, hangup_time, wait_duration, talk_duration, hold_duration,
             agent_hangup, agent_disposition, disposition, sub_disp_1, sub_disp_2, sub_disp_3,
             status, campaign_type, abandoned, country, follow_up_notes,
             agent_history, queue_history, lead_history, recording,
             transfer_event, transfer_extension, transfer_queue_extension, transfer_type, csat
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         await dbService.query(singleRecordSql, values[i]);
@@ -846,7 +847,7 @@ export async function processAndInsertRecords(records, params = {}) {
     if (records.queueCalls && records.queueCalls.length > 0) {
       console.log(`📊 Processing ${records.queueCalls.length} Queue Inbound records...`);
       records.queueCalls.forEach(record => {
-        const processed = processRecordData(record, 'inbound');
+        const processed = processRecordData(record, 'queueCalls');
         if (processed) processedRecords.push(processed);
       });
     }
@@ -855,7 +856,7 @@ export async function processAndInsertRecords(records, params = {}) {
     if (records.queueOutboundCalls && records.queueOutboundCalls.length > 0) {
       console.log(`📊 Processing ${records.queueOutboundCalls.length} Queue Outbound records...`);
       records.queueOutboundCalls.forEach(record => {
-        const processed = processRecordData(record, 'outbound');
+        const processed = processRecordData(record, 'queueOutboundCalls');
         if (processed) processedRecords.push(processed);
       });
     }
@@ -864,7 +865,7 @@ export async function processAndInsertRecords(records, params = {}) {
     if (records.campaignsActivity && records.campaignsActivity.length > 0) {
       console.log(`📊 Processing ${records.campaignsActivity.length} Campaign records...`);
       records.campaignsActivity.forEach(record => {
-        const processed = processRecordData(record, 'campaign');
+        const processed = processRecordData(record, 'campaignsActivity');
         if (processed) processedRecords.push(processed);
       });
     }
