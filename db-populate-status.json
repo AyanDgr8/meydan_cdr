@@ -1,18 +1,18 @@
 {
-  "serviceStarted": "2026-04-07T08:43:29.544Z",
+  "serviceStarted": "2026-04-07T10:21:44.526Z",
   "status": "stopped",
   "config": {
     "intervalMinutes": 5,
     "lookbackHours": 1
   },
-  "lastUpdated": "2026-04-07T08:44:13.482Z",
-  "lastRun": "2026-04-07T08:44:11.773Z",
-  "duration": "42.22s",
-  "recordsAdded": 383,
+  "lastUpdated": "2026-04-07T10:25:05.926Z",
+  "lastRun": "2026-04-07T10:22:49.360Z",
+  "duration": "64.83s",
+  "recordsAdded": 342,
   "cdrRecordsAdded": 0,
   "followUpNotesUpdated": 0,
-  "nextRun": "2026-04-07T08:49:11.775Z",
+  "nextRun": "2026-04-07T10:27:49.367Z",
   "reason": "SIGINT received",
   "error": "Unknown database 'meydan_main_cdr'",
-  "dispositionUpdates": 125
+  "dispositionUpdates": 119
 }
